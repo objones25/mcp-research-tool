@@ -1,6 +1,6 @@
 import { tools } from './tools';
 import { QueryAnalysis, ToolCard, ToolResult, Env, ResearchResult } from './types';
-import { analyzeQuery } from './queryEnhancer';
+import { queryOptimizer } from './queryOptimizer';
 import { callLLM } from './utils';
 
 // Combines tool selection, execution, and result synthesis into a single flow
@@ -11,35 +11,39 @@ export async function orchestrateResearch(
 ): Promise<ResearchResult> {
   const startTime = Date.now();
   
-  // 1. Analyze the query using LLM
-  const analysis = await analyzeQuery(query, env);
+  // 1. Analyze the query using the new queryOptimizer
+  const analysis = await queryOptimizer.analyzeQuery(query, env);
   
   // 2. Select tools using LLM
   const { selectedTools, reasoning } = await selectBestTools(query, analysis, env, Math.ceil(depth * 1.5));
   
-  // 3. Execute selected tools in parallel
-  const toolParams = {
-    query,
-    ...(analysis.extractedUrls.length > 0 && { url: analysis.extractedUrls[0] }),
-    ...(analysis.extractedYouTubeUrls.length > 0 && { 
-      videoId: analysis.extractedYouTubeUrls[0].split('v=')[1] 
-    })
-  };
+  // 3. Optimize queries for selected tools
+  const optimizedQueries = await queryOptimizer.optimizeQueriesForTools(query, analysis, selectedTools, env);
   
+  // 4. Execute selected tools in parallel with optimized queries
   const results = await Promise.all(
-    selectedTools.map(tool => executeToolWithRetry(tool, toolParams, env))
+    selectedTools.map(tool => {
+      const optimizedParams = optimizedQueries[tool.id];
+      return executeToolWithRetry(tool, {
+        ...optimizedParams,
+        ...(analysis.extractedUrls.length > 0 && { url: analysis.extractedUrls[0] }),
+        ...(analysis.extractedYouTubeUrls.length > 0 && { 
+          videoId: analysis.extractedYouTubeUrls[0].split('v=')[1] 
+        })
+      }, env);
+    })
   );
   
-  // 4. Use LLM to synthesize results
+  // 5. Use LLM to synthesize results
   const answer = await synthesizeResults(query, selectedTools, results, env);
   
-  // 5. Extract sources
+  // 6. Extract sources
   const sources = extractSources(results, selectedTools);
   
-  // 6. Calculate confidence using the synthesized answer
+  // 7. Calculate confidence using the synthesized answer
   const confidence = calculateConfidence(results, analysis, answer);
   
-  // 7. Build the response
+  // 8. Build the response
   return {
     answer,
     sources,
