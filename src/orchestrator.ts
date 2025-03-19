@@ -33,11 +33,17 @@ export async function orchestrateResearch(
   // 4. Use LLM to synthesize results
   const answer = await synthesizeResults(query, selectedTools, results, env);
   
-  // 5. Build the response
+  // 5. Extract sources
+  const sources = extractSources(results, selectedTools);
+  
+  // 6. Calculate confidence using the synthesized answer
+  const confidence = calculateConfidence(results, analysis, answer);
+  
+  // 7. Build the response
   return {
     answer,
-    sources: extractSources(results, selectedTools),
-    confidence: calculateConfidence(results, analysis),
+    sources,
+    confidence,
     metadata: {
       executionTime: Date.now() - startTime,
       toolsUsed: selectedTools.map(t => t.id),
@@ -292,22 +298,14 @@ function extractSources(results: ToolResult[], tools: ToolCard[]): Array<{
   return sources.sort((a, b) => a.id - b.id);
 }
 
-function calculateConfidence(results: ToolResult[], analysis: QueryAnalysis): number {
+function calculateConfidence(results: ToolResult[], analysis: QueryAnalysis, synthesizedAnswer: string): number {
   const successfulResults = results.filter(r => r.success);
   if (successfulResults.length === 0) return 0;
   
-  // Calculate base confidence from tool results, with a minimum floor
+  // Calculate base confidence from tool results
   let avgConfidence = successfulResults.reduce(
     (sum, r) => sum + (r.metadata?.confidence || 0.5), 0
   ) / successfulResults.length;
-  
-  // Ensure a minimum base confidence if the result format is structured
-  if (successfulResults.some(r => {
-    const data = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
-    return data.includes('### ') || data.includes('## ') || data.includes('**');
-  })) {
-    avgConfidence = Math.max(avgConfidence, 0.6);
-  }
   
   // Enhanced citation pattern detection
   const citationPatterns = [
@@ -318,50 +316,53 @@ function calculateConfidence(results: ToolResult[], analysis: QueryAnalysis): nu
     /\[\d+\]:/g                  // [1]: format (bibliography style)
   ];
   
+  // Check citations in synthesized answer
   const citationCount = citationPatterns.reduce((count, pattern) => {
-    const matches = results.flatMap(r => 
-      r.data?.toString().match(pattern) || []
-    );
+    const matches = synthesizedAnswer.match(pattern) || [];
     return count + matches.length;
   }, 0);
   
-  // Calculate a more lenient citation density
+  // Calculate citation density based on answer length
+  const wordCount = synthesizedAnswer.split(/\s+/).length;
   const citationDensity = Math.min(
-    (citationCount / Math.max(successfulResults.length * 3, 1)) * 2,
+    (citationCount / Math.max(Math.floor(wordCount / 100), 1)) * 2,
     1.0
   );
   
-  // Add weight for presence of citations section
-  const hasCitationsSection = successfulResults.some(r => {
-    const data = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
-    return data.includes('Citations:') || 
-           data.includes('References:') || 
-           data.includes('### Citations') || 
-           data.includes('### References');
-  });
+  // Check for sections in synthesized answer
+  const hasSections = {
+    introduction: /(?:^|\n)###?\s*Introduction/i.test(synthesizedAnswer),
+    conclusion: /(?:^|\n)###?\s*Conclusion/i.test(synthesizedAnswer),
+    citations: /(?:^|\n)###?\s*(?:Citations|References):/i.test(synthesizedAnswer),
+    mainContent: (synthesizedAnswer.match(/(?:^|\n)###?\s+[^#\n]+/g) || []).length >= 2
+  };
   
-  const citationSectionBonus = hasCitationsSection ? 0.2 : 0;
+  // Calculate section score
+  const sectionScore = Object.values(hasSections).filter(Boolean).length / 4;
   
-  // Enhanced content quality detection
-  const contentQualityIndicators = successfulResults.some(r => {
-    const data = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
-    return (
-      data.includes('Conclusion') || 
-      data.includes('References') || 
-      data.includes('Citations:') ||
-      data.includes('Introduction') ||
-      data.includes('Summary') ||
-      (data.match(/\*\*[^*]+\*\*/g)?.length ?? 0) > 3 || // Lower threshold from 5 to 3
-      (data.match(/###/g)?.length ?? 0) > 1 ||           // Check for multiple section headers
-      (data.match(/\d\.\s/g)?.length ?? 0) > 2 ||        // Check for numbered lists
-      /\[\d+\]/.test(data) ||                           // Check for citation brackets
-      /\d{4}/.test(data)                                // Contains years
-    );
-  });
+  // Check formatting in synthesized answer
+  const formatting = {
+    boldText: (synthesizedAnswer.match(/\*\*[^*]+\*\*/g) || []).length >= 3,
+    lists: /(?:^|\n)\s*[-*]\s+|\d+\.\s+/m.test(synthesizedAnswer),
+    headers: (synthesizedAnswer.match(/(?:^|\n)#{1,3}\s+[^#\n]+/g) || []).length >= 2,
+    paragraphs: synthesizedAnswer.split(/\n\n+/).length >= 3
+  };
   
-  const contentQualityFactor = contentQualityIndicators ? 0.85 : 0.5;
+  // Calculate formatting score
+  const formattingScore = Object.values(formatting).filter(Boolean).length / 4;
   
-  // Improved source diversity evaluation
+  // Check content quality indicators in synthesized answer
+  const contentQuality = {
+    keyTermsBolded: (synthesizedAnswer.match(/\*\*[^*]+\*\*/g) || []).length >= 5,
+    properParagraphs: synthesizedAnswer.split(/\n\n+/).length >= 4,
+    consistentFormatting: !/(#{1,3}\s*$|\*\*\s*\*\*)/m.test(synthesizedAnswer),
+    meaningfulSections: (synthesizedAnswer.match(/(?:^|\n)###?\s+[^#\n]{10,}/g) || []).length >= 2
+  };
+  
+  // Calculate content quality score
+  const contentQualityScore = Object.values(contentQuality).filter(Boolean).length / 4;
+  
+  // Calculate source diversity
   const uniqueUrls = new Set(
     successfulResults.flatMap(r => {
       if (r.data && typeof r.data === 'object') {
@@ -381,14 +382,15 @@ function calculateConfidence(results: ToolResult[], analysis: QueryAnalysis): nu
   
   const sourceDiversityFactor = Math.min((uniqueUrls / 2) + (uniqueToolTypes / 3), 1.0);
   
-  // Recalibrated weights with new factors
+  // Recalibrated weights focusing more on synthesized answer quality
   const weights = {
-    toolResults: 0.30,         // Decreased
-    queryAnalysis: 0.10,       // Decreased
-    citations: 0.15,
-    contentQuality: 0.30,      // Increased
-    sourceDiversity: 0.10,
-    citationSection: 0.05      // New factor
+    toolResults: 0.15,        // Decreased
+    queryAnalysis: 0.10,      // Decreased
+    citations: 0.20,          // Increased
+    sections: 0.15,           // New weight
+    formatting: 0.15,         // New weight
+    contentQuality: 0.15,     // New weight
+    sourceDiversity: 0.10     // Unchanged
   };
   
   // Calculate final confidence score with new weights
@@ -396,22 +398,37 @@ function calculateConfidence(results: ToolResult[], analysis: QueryAnalysis): nu
     (avgConfidence * weights.toolResults) +
     (analysis.confidence * weights.queryAnalysis) +
     (citationDensity * weights.citations) +
-    (contentQualityFactor * weights.contentQuality) +
-    (sourceDiversityFactor * weights.sourceDiversity) +
-    (citationSectionBonus * weights.citationSection),
+    (sectionScore * weights.sections) +
+    (formattingScore * weights.formatting) +
+    (contentQualityScore * weights.contentQuality) +
+    (sourceDiversityFactor * weights.sourceDiversity),
     1.0
   );
   
   // Enhanced confidence metadata
   const confidenceMetadata = {
     baseConfidence: avgConfidence,
-    citationDensity,
-    citationCount,
-    citationSectionBonus,
-    contentQualityFactor,
-    sourceDiversityFactor,
-    uniqueUrls,
-    uniqueToolTypes,
+    citationMetrics: {
+      count: citationCount,
+      density: citationDensity,
+      perWordRatio: citationCount / wordCount
+    },
+    structureMetrics: {
+      sections: hasSections,
+      sectionScore,
+      formatting,
+      formattingScore
+    },
+    contentMetrics: {
+      quality: contentQuality,
+      qualityScore: contentQualityScore,
+      wordCount
+    },
+    sourceMetrics: {
+      uniqueUrls,
+      uniqueToolTypes,
+      diversityFactor: sourceDiversityFactor
+    },
     weights
   };
   
