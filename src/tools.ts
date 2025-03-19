@@ -750,6 +750,226 @@ export const arXivSearch: ToolCard = {
   }
 };
 
+// News API Tool
+export const newsApiSearch: ToolCard = {
+  id: 'news_api_search',
+  name: 'News API Search',
+  description: 'Search worldwide news articles from over 80,000 sources using the News API',
+  capabilities: ['news_search', 'current_events', 'media_monitoring'],
+  inputTypes: {
+    query: 'Search query string',
+    maxResults: 'Maximum number of results (default: 10)',
+    sortBy: 'Sort articles by: relevancy, popularity, publishedAt (default: publishedAt)',
+    language: 'Optional 2-letter ISO language code (e.g., en)',
+    from: 'Optional start date (YYYY-MM-DD). Note: Free tier is limited to last 30 days only. For best results, omit date filters to get current news',
+    to: 'Optional end date (YYYY-MM-DD)'
+  },
+  outputType: 'List of news articles with title, description, source, and URL',
+  demoCommands: [
+    {
+      command: 'newsApiSearch({ query: "artificial intelligence", sortBy: "popularity" })',
+      description: 'Search for current AI news without date filters'
+    }
+  ],
+  metadata: {
+    limitations: [
+      'Free tier is limited to: 100 requests per day, Articles from the last 30 days only, No historical article access (requires paid plan)',
+      'Rate limited to 1 request per second',
+      'Results may be delayed by up to 1 hour'
+    ],
+    bestPractices: [
+      'Use specific search terms',
+      'For free tier, ensure date range is within last 30 days',
+      'Combine with language filters for better relevance',
+      'Omit date filters for current news'
+    ]
+  },
+  compatibilityMetadata: {
+    queryTypes: {
+      'current_events': 0.9,
+      'news': 0.9,
+      'media': 0.8,
+      'general_knowledge': 0.7
+    },
+    patterns: [
+      'news', 'article', 'latest', 'recent', 'current',
+      'today', 'headlines', 'press', 'media', 'report'
+    ],
+    urlCompatible: false,
+    entityTypes: ['event', 'person', 'organization', 'location', 'topic']
+  },
+  relevanceScore(query: string, analysis: QueryAnalysis): number {
+    let score = 0;
+    
+    // Pattern matching
+    const hasPattern = this.compatibilityMetadata.patterns.some(pattern => 
+      query.toLowerCase().includes(pattern.toLowerCase())
+    );
+    score += hasPattern ? 0.4 : 0;
+    
+    // Query type compatibility
+    const typeScore = Math.max(
+      ...analysis.queryTypes.map(type => 
+        this.compatibilityMetadata.queryTypes[type] || 0
+      )
+    );
+    score += typeScore * 0.4;
+    
+    // Entity compatibility
+    const hasRelevantEntity = analysis.entities.some(entity =>
+      this.compatibilityMetadata.entityTypes.includes(entity)
+    );
+    score += hasRelevantEntity ? 0.2 : 0;
+    
+    return Math.min(score, 1.0);
+  },
+  async execute(params: ToolParams, env: Env): Promise<ToolResult> {
+    try {
+      if (!params.query) {
+        throw new Error('Query parameter is required');
+      }
+      if (!env.NEWS_API_KEY) {
+        throw new Error('News API key is not configured');
+      }
+
+      const startTime = Date.now();
+      const url = new URL('https://newsapi.org/v2/everything');
+      url.searchParams.append('q', params.query);
+      url.searchParams.append('pageSize', (params.maxResults || 10).toString());
+      url.searchParams.append('sortBy', params.sortBy || 'publishedAt');
+      
+      if (params.language) {
+        url.searchParams.append('language', params.language);
+      }
+      if (params.from) {
+        url.searchParams.append('from', params.from);
+      }
+      if (params.to) {
+        url.searchParams.append('to', params.to);
+      }
+
+      const response = await fetch(url, {
+        headers: {
+          'X-Api-Key': env.NEWS_API_KEY,
+          'User-Agent': 'mcp-research-tool'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`News API error: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return handleToolSuccess(data, startTime, 0.9);
+    } catch (error: unknown) {
+      return handleToolError(error);
+    }
+  }
+};
+
+// Stack Exchange API Tool
+export const stackExchangeSearch: ToolCard = {
+  id: 'stack_exchange_search',
+  name: 'Stack Exchange Search',
+  description: 'Search Stack Exchange network sites (primarily Stack Overflow) for technical questions and answers',
+  capabilities: ['technical_qa', 'programming_help', 'developer_knowledge'],
+  inputTypes: {
+    query: 'Search query string',
+    maxResults: 'Maximum number of results (default: 10)',
+    site: 'Stack Exchange site (default: stackoverflow)',
+    sort: 'Sort by: activity, votes, creation, relevance (default: relevance)',
+    tagged: 'Optional comma separated list of tags'
+  },
+  outputType: 'List of questions with answers, vote counts, and metadata',
+  demoCommands: [
+    {
+      command: 'stackExchangeSearch({ query: "typescript generics", tagged: "typescript" })',
+      description: 'Search for TypeScript generics questions'
+    }
+  ],
+  metadata: {
+    limitations: [
+      'API quota limits apply',
+      'Some features require authentication',
+      'Results may be cached'
+    ],
+    bestPractices: [
+      'Include relevant tags',
+      'Use specific technical terms',
+      'Filter by score for quality answers'
+    ]
+  },
+  compatibilityMetadata: {
+    queryTypes: {
+      'technical': 0.9,
+      'programming': 0.9,
+      'question_answer': 0.8,
+      'problem_solving': 0.8
+    },
+    patterns: [
+      'how to', 'error', 'problem', 'issue', 'debug',
+      'stackoverflow', 'stack overflow', 'solution',
+      'example', 'help', 'question'
+    ],
+    urlCompatible: false,
+    entityTypes: ['programming_language', 'framework', 'library', 'error', 'concept']
+  },
+  relevanceScore(query: string, analysis: QueryAnalysis): number {
+    let score = 0;
+    
+    // Pattern matching
+    const hasPattern = this.compatibilityMetadata.patterns.some(pattern => 
+      query.toLowerCase().includes(pattern.toLowerCase())
+    );
+    score += hasPattern ? 0.4 : 0;
+    
+    // Query type compatibility
+    const typeScore = Math.max(
+      ...analysis.queryTypes.map(type => 
+        this.compatibilityMetadata.queryTypes[type] || 0
+      )
+    );
+    score += typeScore * 0.4;
+    
+    // Entity compatibility
+    const hasRelevantEntity = analysis.entities.some(entity =>
+      this.compatibilityMetadata.entityTypes.includes(entity)
+    );
+    score += hasRelevantEntity ? 0.2 : 0;
+    
+    return Math.min(score, 1.0);
+  },
+  async execute(params: ToolParams, env: Env): Promise<ToolResult> {
+    try {
+      if (!params.query) {
+        throw new Error('Query parameter is required');
+      }
+
+      const startTime = Date.now();
+      const url = new URL('https://api.stackexchange.com/2.3/search');
+      url.searchParams.append('site', params.site || 'stackoverflow');
+      url.searchParams.append('intitle', params.query);
+      url.searchParams.append('pagesize', (params.maxResults || 10).toString());
+      url.searchParams.append('sort', params.sort || 'relevance');
+      url.searchParams.append('filter', 'withbody');
+      
+      if (params.tagged) {
+        url.searchParams.append('tagged', params.tagged);
+      }
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Stack Exchange API error: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return handleToolSuccess(data, startTime, 0.9);
+    } catch (error: unknown) {
+      return handleToolError(error);
+    }
+  }
+};
+
 // Export all tools
 export const tools = {
   braveSearch,
@@ -758,5 +978,7 @@ export const tools = {
   githubCodeSearch,
   fireCrawl,
   youtubeTranscript,
-  arXivSearch
+  arXivSearch,
+  newsApiSearch,
+  stackExchangeSearch
 } as const;

@@ -7,6 +7,7 @@ export interface Env {
   TAVILY_API_KEY: string;
   GITHUB_TOKEN: string;
   FIRE_CRAWL_API_KEY: string;
+  NEWS_API_KEY: string;
   OPENAI_API_KEY?: string;
   
   // Optional Workers AI binding
