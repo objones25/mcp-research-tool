@@ -3,63 +3,238 @@ import { QueryAnalysis, ToolCard, ToolResult, Env, ResearchResult } from './type
 import { queryOptimizer } from './queryOptimizer';
 import { callLLM } from './utils';
 
-// Combines tool selection, execution, and result synthesis into a single flow
+// Helper function to assess result relevance
+async function assessRelevance(
+  query: string,
+  results: ToolResult[],
+  env: Env
+): Promise<ToolResult[]> {
+  const today = new Date().toISOString().split('T')[0];
+  
+  const prompt = `
+Assess which of these results are relevant and high-quality:
+
+Query: "${query}"
+Today's Date: ${today}
+
+Results:
+${results.map((r, i) => `
+Result ${i + 1}:
+${JSON.stringify(r.data, null, 2)}`).join('\n')}
+
+Consider each result carefully:
+1. Is it directly relevant to answering the query?
+2. Is it from a reputable source?
+3. Is it sufficiently current for this type of information?
+4. Does it provide accurate, substantive information?
+
+Return ONLY a JSON array of indices (0-based) for results that meet ALL criteria.`;
+
+  try {
+    const llmResult = await callLLM(prompt, env, {
+      system: "You are a strict research analyst. Only include results that are relevant, reputable, current, and substantive.",
+      temperature: 0.2
+    });
+    
+    const relevantIndices = new Set(JSON.parse(llmResult));
+    return results.filter((_, i) => relevantIndices.has(i));
+  } catch (error) {
+    console.error('Relevance assessment failed:', error);
+    return results;
+  }
+}
+
+// Helper function to analyze information gaps
+async function analyzeGaps(
+  query: string,
+  currentResults: ToolResult[],
+  env: Env
+): Promise<{ hasGaps: boolean; followUpQuery?: string }> {
+  const prompt = `
+Analyze these research results for critical information gaps:
+
+Original Query: "${query}"
+
+Current Results:
+${currentResults.map((r, i) => `
+Result ${i + 1}:
+${JSON.stringify(r.data, null, 2)}`).join('\n')}
+
+Consider:
+1. Are there MAJOR aspects of the query that remain completely unanswered?
+2. Is there a CRITICAL piece of information missing that would significantly change the answer?
+3. Would additional research likely yield substantially different or more accurate results?
+
+Return ONLY a JSON object:
+{
+  "hasGaps": boolean,
+  "followUpQuery": string or null,
+  "gapExplanation": "Brief explanation of the critical gap, if any"
+}
+
+IMPORTANT: Only identify truly critical gaps that would significantly impact the answer.
+If the current results provide a reasonably complete answer, return hasGaps: false.`;
+
+  try {
+    const llmResult = await callLLM(prompt, env, {
+      system: "You analyze result completeness, identifying only critical information gaps that would substantially impact the answer. Be conservative - only suggest follow-up queries for major gaps.",
+      temperature: 0.2
+    });
+    
+    const { hasGaps, followUpQuery, gapExplanation } = JSON.parse(llmResult);
+    if (hasGaps) {
+      console.log(`Gap identified: ${gapExplanation}`);
+    }
+    return { hasGaps, followUpQuery: followUpQuery || undefined };
+  } catch (error) {
+    console.error('Gap analysis failed:', error);
+    return { hasGaps: false };
+  }
+}
+
+// Main research orchestration function
 export async function orchestrateResearch(
   query: string,
   depth: number = 3,
   env: Env
 ): Promise<ResearchResult> {
   const startTime = Date.now();
+  let iteration = 0;
+  let allResults: ToolResult[] = [];
+  let allSources: any[] = [];
+  let currentQuery = query;
+  let toolSelectionHistory = new Set<string>();
   
-  // 1. Analyze the query using the new queryOptimizer
+  // Initial query analysis
   const analysis = await queryOptimizer.analyzeQuery(query, env);
   
-  // 2. Select tools using LLM
-  const { selectedTools, reasoning } = await selectBestTools(query, analysis, env, Math.ceil(depth * 1.5));
+  while (iteration < depth) {
+    console.log(`Starting iteration ${iteration + 1}/${depth}`);
+    
+    // Select tools for current iteration
+    const { selectedTools } = await selectBestTools(
+      currentQuery, 
+      analysis,
+      env,
+      Math.ceil(depth * 1.5)
+    );
+    
+    // Track which tools we've used to avoid repetition
+    const newTools = selectedTools.filter(tool => !toolSelectionHistory.has(tool.id));
+    if (newTools.length === 0) {
+      console.log('No new tools available, terminating research');
+      break;
+    }
+    newTools.forEach(tool => toolSelectionHistory.add(tool.id));
+    
+    // Optimize queries for selected tools
+    const optimizedQueries = await queryOptimizer.optimizeQueriesForTools(
+      currentQuery,
+      analysis,
+      newTools,
+      env
+    );
+    
+    // Execute tools with optimized queries
+    const iterationResults = await Promise.all(
+      newTools.map(tool => {
+        const optimizedParams = optimizedQueries[tool.id];
+        return executeToolWithRetry(tool, {
+          ...optimizedParams,
+          ...(analysis.extractedUrls.length > 0 && { url: analysis.extractedUrls[0] }),
+          ...(analysis.extractedYouTubeUrls.length > 0 && { 
+            videoId: analysis.extractedYouTubeUrls[0].split('v=')[1] 
+          })
+        }, env);
+      })
+    );
+    
+    // Assess relevance of new results
+    const relevantResults = await assessRelevance(query, iterationResults, env);
+    
+    // Add relevant results to collection
+    allResults = [...allResults, ...relevantResults];
+    
+    // Extract and collect sources
+    const newSources = extractSources(relevantResults, newTools);
+    allSources = [...allSources, ...newSources];
+    
+    // Analyze gaps and determine if another iteration is needed
+    const { hasGaps, followUpQuery } = await analyzeGaps(query, allResults, env);
+    
+    // Check termination conditions
+    if (!hasGaps || !followUpQuery) {
+      console.log('No critical gaps found, terminating research');
+      break;
+    }
+    
+    // Update query for next iteration
+    currentQuery = followUpQuery;
+    iteration++;
+    
+    // Break if we've reached maximum depth
+    if (iteration >= depth) {
+      console.log('Reached maximum depth, terminating research');
+      break;
+    }
+  }
   
-  // 3. Optimize queries for selected tools
-  const optimizedQueries = await queryOptimizer.optimizeQueriesForTools(query, analysis, selectedTools, env);
+  // Synthesize final results
+  const answer = await synthesizeResults(query, allResults, env);
+  const confidence = calculateConfidence(allResults, analysis, answer);
   
-  // 4. Execute selected tools in parallel with optimized queries
-  const results = await Promise.all(
-    selectedTools.map(tool => {
-      const optimizedParams = optimizedQueries[tool.id];
-      return executeToolWithRetry(tool, {
-        ...optimizedParams,
-        ...(analysis.extractedUrls.length > 0 && { url: analysis.extractedUrls[0] }),
-        ...(analysis.extractedYouTubeUrls.length > 0 && { 
-          videoId: analysis.extractedYouTubeUrls[0].split('v=')[1] 
-        })
-      }, env);
-    })
-  );
-  
-  // 5. Use LLM to synthesize results
-  const answer = await synthesizeResults(query, selectedTools, results, env);
-  
-  // 6. Extract sources
-  const sources = extractSources(results, selectedTools);
-  
-  // 7. Calculate confidence using the synthesized answer
-  const confidence = calculateConfidence(results, analysis, answer);
-  
-  // 8. Build the response
   return {
     answer,
-    sources,
+    sources: allSources,
     confidence,
     metadata: {
       executionTime: Date.now() - startTime,
-      toolsUsed: selectedTools.map(t => t.id),
+      iterations: iteration + 1,
+      totalResults: allResults.length,
       queryTypes: analysis.queryTypes,
-      toolSelectionReasoning: reasoning,
-      toolResults: results.map((r, i) => ({
-        tool: selectedTools[i].id,
+      toolsUsed: Array.from(toolSelectionHistory),
+      toolResults: allResults.map((r, i) => ({
+        tool: r.metadata?.toolId || `unknown_tool_${i}`,
         success: r.success,
         confidence: r.metadata?.confidence || 0
       }))
     }
   };
+}
+
+// Update synthesizeResults to handle array of results directly
+async function synthesizeResults(
+  query: string,
+  results: ToolResult[],
+  env: Env
+): Promise<string> {
+  const prompt = `
+Synthesize these research results into a comprehensive answer:
+
+Query: "${query}"
+
+Results:
+${results.map((r, i) => `
+Result ${i + 1}:
+${JSON.stringify(r.data, null, 2)}`).join('\n')}
+
+Instructions:
+1. Create a well-organized response
+2. Use numbered citations [1], [2], etc.
+3. Include a "Citations:" section
+4. Bold key concepts
+5. Each claim should be supported by citations
+6. Address the original query directly`;
+
+  try {
+    return await callLLM(prompt, env, {
+      system: "You synthesize research results into clear, well-structured answers with proper citations.",
+      temperature: 0.5
+    });
+  } catch (error) {
+    console.error('Results synthesis failed:', error);
+    return `Unable to synthesize results. Found ${results.length} relevant results.`;
+  }
 }
 
 // Helper functions with streamlined implementations
@@ -169,87 +344,6 @@ async function executeToolWithRetry(
     error: 'Unexpected execution flow',
     metadata: { attempts: maxRetries + 1 }
   };
-}
-
-async function synthesizeResults(
-  query: string,
-  tools: ToolCard[],
-  results: ToolResult[],
-  env: Env
-): Promise<string> {
-  // Format result data for the LLM
-  const toolResults = tools.map((tool, i) => {
-    const result = results[i];
-    if (!result.success) return `[${tool.name}]: Failed - ${result.error}`;
-    
-    let dataOutput;
-    if (Array.isArray(result.data)) {
-      // Limit array output to first 3 items for brevity
-      const items = result.data.slice(0, 3);
-      dataOutput = items.map(item => JSON.stringify(item, null, 2)).join('\n');
-      if (result.data.length > 3) {
-        dataOutput += `\n... (${result.data.length - 3} more results)`;
-      }
-    } else {
-      dataOutput = typeof result.data === 'object' 
-        ? JSON.stringify(result.data, null, 2) 
-        : String(result.data);
-    }
-    
-    return `[${tool.name}]:\n${dataOutput}`;
-  }).join('\n\n');
-  
-  try {
-    // Enhanced prompt for synthesizing results
-    const prompt = `
-Synthesize these research results into a comprehensive answer:
-
-Query: "${query}"
-
-Results:
-${toolResults}
-
-Instructions:
-1. Create a well-organized, informative response with clear structure
-2. Use numbered citations [1], [2], etc. to reference sources
-3. Include a dedicated "Citations:" or "References:" section at the end
-4. Use headers (###) to organize your response into clear sections
-5. Bold (**key concepts**) for improved readability
-6. Include numbered or bulleted lists for clarity when appropriate
-7. Each claim should be supported by at least one citation
-8. Include relevant details without overwhelming
-9. Directly address the original query
-10. When relevant, include sections like "Introduction" and "Conclusion"
-11. Ensure citations are properly formatted with source information
-
-Additional guidance to improve quality:
-- Structure helps: Use headers (###), bold text (**important**), and numbered points
-- Citations matter: Include a dedicated "Citations:" section with proper formatting
-- Completeness: Having Introduction, Core Sections, and Conclusion improves quality
-- Source diversity: Reference multiple sources when possible
-- Lists and bullets: Use them to break down complex information
-- Key terms: Bold important concepts and terminology
-- Section headers: Use clear, descriptive headers for each major point
-- Citation format: [1] for inline citations, full reference in Citations section
-`;
-
-    return await callLLM(prompt, env, {
-      system: "You are an expert researcher who synthesizes information into accurate, helpful answers. Always use numbered citations to attribute information to sources. Structure your response with clear sections, bold text for emphasis, and proper citation formatting.",
-      temperature: 0.5,
-      max_tokens: 2000
-    });
-  } catch (error) {
-    console.error('Results synthesis error:', error);
-    
-    // Simple fallback
-    return `Research results for: "${query}"\n\n${
-      results.map((result, i) => 
-        `${tools[i].name}: ${result.success 
-          ? `Found ${Array.isArray(result.data) ? result.data.length : '1'} result(s)` 
-          : `Failed - ${result.error}`}`
-      ).join('\n')
-    }`;
-  }
 }
 
 function extractSources(results: ToolResult[], tools: ToolCard[]): Array<{
