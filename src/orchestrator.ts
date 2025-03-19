@@ -199,17 +199,23 @@ Query: "${query}"
 Results:
 ${toolResults}
 
-- Create a well-organized, informative response
-- Include relevant details without overwhelming 
-- Properly attribute information to the sources
-- Handle conflicting information or tool failures
-- Directly address the original query
+Instructions:
+1. Create a well-organized, informative response
+2. Use numbered citations [1], [2], etc. to reference sources
+3. Each claim should be supported by at least one citation
+4. Include relevant details without overwhelming
+5. Handle conflicting information or tool failures
+6. Directly address the original query
+7. Use consistent citation numbers throughout the text
+8. Place citations at the end of relevant sentences
+9. Multiple citations can be combined like [1,2] if needed
+10. Every source used should be cited at least once
 `;
 
     return await callLLM(prompt, env, {
-      system: "You are an expert researcher who synthesizes information into accurate, helpful answers.",
+      system: "You are an expert researcher who synthesizes information into accurate, helpful answers. Always use numbered citations to attribute information to sources.",
       temperature: 0.5,
-      max_tokens: 1500
+      max_tokens: 2000
     });
   } catch (error) {
     console.error('Results synthesis error:', error);
@@ -225,36 +231,154 @@ ${toolResults}
   }
 }
 
-function extractSources(results: ToolResult[], tools: ToolCard[]): string[] {
-  return [...new Set(
-    results.flatMap((result, index) => {
-      if (!result.success || !result.data) return [];
-      
-      const toolName = tools[index].name;
-      const urls = [];
-      
-      if (Array.isArray(result.data)) {
-        result.data.forEach(item => {
-          if (item.url) urls.push(`${toolName}: ${item.url}`);
-        });
-      } else if (result.data.url) {
-        urls.push(`${toolName}: ${result.data.url}`);
-      }
-      
-      return urls;
-    })
-  )];
+function extractSources(results: ToolResult[], tools: ToolCard[]): Array<{
+  id: number;
+  tool: string;
+  url?: string;
+  title?: string;
+  metadata?: Record<string, any>;
+}> {
+  const sources = results.flatMap((result, index) => {
+    if (!result.success || !result.data) return [];
+    
+    const tool = tools[index];
+    const sourceData = [];
+    
+    if (Array.isArray(result.data)) {
+      result.data.forEach((item, itemIndex) => {
+        if (item.url || item.title) {
+          sourceData.push({
+            id: (index * 100) + itemIndex + 1, // Ensures unique IDs across tools
+            tool: tool.name,
+            url: item.url,
+            title: item.title || item.url,
+            metadata: {
+              ...item,
+              confidence: result.metadata?.confidence,
+              toolType: tool.id
+            }
+          });
+        }
+      });
+    } else if (result.data.url || result.data.title) {
+      sourceData.push({
+        id: (index * 100) + 1,
+        tool: tool.name,
+        url: result.data.url,
+        title: result.data.title || result.data.url,
+        metadata: {
+          ...result.data,
+          confidence: result.metadata?.confidence,
+          toolType: tool.id
+        }
+      });
+    }
+    
+    return sourceData;
+  });
+
+  // Sort by ID to ensure consistent ordering
+  return sources.sort((a, b) => a.id - b.id);
 }
 
 function calculateConfidence(results: ToolResult[], analysis: QueryAnalysis): number {
   const successfulResults = results.filter(r => r.success);
   if (successfulResults.length === 0) return 0;
   
-  const avgConfidence = successfulResults.reduce(
-    (sum, r) => sum + (r.metadata?.confidence || 0), 0
+  // Calculate base confidence from tool results, with a minimum floor
+  let avgConfidence = successfulResults.reduce(
+    (sum, r) => sum + (r.metadata?.confidence || 0.5), 0
   ) / successfulResults.length;
   
-  return Math.min(avgConfidence * analysis.confidence, 1.0);
+  // Ensure a minimum base confidence if the result format is structured
+  if (successfulResults.some(r => {
+    const data = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
+    return data.includes('### ') || data.includes('## ') || data.includes('**');
+  })) {
+    avgConfidence = Math.max(avgConfidence, 0.6);
+  }
+  
+  // More flexible citation detection
+  const citationPatterns = [
+    /\[(\d+(?:,\s*\d+)*)\]/g,  // Standard [1] format
+    /\[([a-zA-Z][^[\]]*)\]/g,  // [AuthorYear] format
+    /\(([^()]*\d{4}[^()]*)\)/g // (Author et al., 2023) format
+  ];
+  
+  const citationCount = citationPatterns.reduce((count, pattern) => {
+    const matches = results.flatMap(r => 
+      r.data?.toString().match(pattern) || []
+    );
+    return count + matches.length;
+  }, 0);
+  
+  // Calculate a more lenient citation density
+  const citationDensity = Math.min(
+    (citationCount / Math.max(successfulResults.length * 3, 1)) * 2, // Multiply by 2 to increase weight
+    1.0
+  );
+  
+  // Consider content quality metrics
+  const contentQualityIndicators = successfulResults.some(r => {
+    const data = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
+    return (
+      data.includes('Conclusion') || 
+      data.includes('References') || 
+      (data.match(/\*\*[^*]+\*\*/g)?.length ?? 0) > 5 || // Has multiple bold sections
+      data.includes('Introduction') ||
+      data.includes('Summary') ||
+      /\d{4}/.test(data) // Contains years (likely references)
+    );
+  });
+  
+  const contentQualityFactor = contentQualityIndicators ? 0.8 : 0.5;
+  
+  // Consider source diversity
+  const uniqueToolTypes = new Set(
+    successfulResults.map(r => r.metadata?.toolType).filter(Boolean)
+  ).size;
+  const sourceDiversityFactor = Math.min(uniqueToolTypes / 2, 1.0); // Normalize to max of 1.0
+  
+  // Adjust weights
+  const weights = {
+    toolResults: 0.35,
+    queryAnalysis: 0.15,
+    citations: 0.15,
+    contentQuality: 0.25,
+    sourceDiversity: 0.10
+  };
+  
+  // Calculate final confidence score
+  const confidenceScore = Math.min(
+    (avgConfidence * weights.toolResults) +
+    (analysis.confidence * weights.queryAnalysis) +
+    (citationDensity * weights.citations) +
+    (contentQualityFactor * weights.contentQuality) +
+    (sourceDiversityFactor * weights.sourceDiversity),
+    1.0
+  );
+  
+  // Add confidence calculation details to metadata
+  const confidenceMetadata = {
+    baseConfidence: avgConfidence,
+    citationDensity,
+    contentQualityFactor,
+    sourceDiversityFactor,
+    citationCount,
+    uniqueToolTypes,
+    weights
+  };
+  
+  // Store metadata in the first successful result for debugging
+  if (successfulResults.length > 0) {
+    const firstResult = successfulResults[0];
+    firstResult.metadata = {
+      ...(firstResult.metadata || {}),
+      confidenceCalculation: confidenceMetadata
+    };
+  }
+  
+  return confidenceScore;
 }
 
 // Export the orchestrator

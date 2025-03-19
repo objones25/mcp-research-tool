@@ -1,4 +1,4 @@
-import { ResearchResult } from './types';
+import { ResearchResult, Source } from './types';
 
 /**
  * Options for formatting research results
@@ -25,10 +25,13 @@ function formatResearchResult(
     maxSources = 5
   } = options;
 
+  // Process citations in the answer text
+  const processedAnswer = formatFootnotes(result.answer);
+
   // Build markdown content sections
   const sections = [
     formatHeader(result),
-    result.answer,
+    processedAnswer,
     formatSources(result.sources, maxSources),
     includeMetadata ? formatMetadata(result.metadata) : ''
   ].filter(Boolean);
@@ -47,13 +50,13 @@ function formatHeader(result: ResearchResult): string {
   return `# Research Results ${confidenceEmoji}\n*${confidenceText}*`;
 }
 
-// Format sources list
-function formatSources(sources: string[], maxSources: number): string {
+// Format sources list with numbered citations
+function formatSources(sources: Source[], maxSources: number): string {
   if (sources.length === 0) return '';
   
   const sourcesList = sources
     .slice(0, maxSources)
-    .map(source => `- ${formatSource(source)}`)
+    .map(source => formatSourceEntry(source))
     .join('\n');
   
   const hasMore = sources.length > maxSources;
@@ -62,16 +65,25 @@ function formatSources(sources: string[], maxSources: number): string {
   return `## Sources\n${sourcesList}${moreInfo}`;
 }
 
-// Format a single source, handling URLs properly
-function formatSource(source: string): string {
-  // Extract URL if present
-  const urlMatch = source.match(/(https?:\/\/[^\s]+)/);
-  if (!urlMatch) return source;
-  
-  const url = urlMatch[1];
-  const label = source.replace(url, '').trim() || url;
-  
-  return `[${label}](${url})`;
+// Format a single source entry with citation number
+function formatSourceEntry(source: Source): string {
+  const parts = [
+    `[${source.id}] ${source.tool}`,
+    source.title && `**${source.title}**`,
+    source.url && `[Link](${source.url})`,
+    source.metadata?.description
+  ].filter(Boolean);
+
+  return `- ${parts.join(' - ')}`;
+}
+
+// Process and format citation footnotes in text
+function formatFootnotes(text: string): string {
+  // Ensure citation format consistency
+  return text.replace(/\[(\d+(?:,\s*\d+)*)\]/g, (match, numbers) => {
+    const citations = numbers.split(',').map((n: string) => n.trim());
+    return `[${citations.join(',')}]`;
+  });
 }
 
 // Format metadata section

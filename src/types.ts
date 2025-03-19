@@ -77,9 +77,17 @@ export interface ToolResult {
   };
 }
 
+export interface Source {
+  id: number;
+  tool: string;
+  url?: string;
+  title?: string;
+  metadata?: Record<string, any>;
+}
+
 export interface ResearchResult {
   answer: string;
-  sources: string[];
+  sources: Source[];
   confidence: number;
   metadata: {
     executionTime: number;
