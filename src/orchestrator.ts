@@ -190,7 +190,7 @@ async function synthesizeResults(
   }).join('\n\n');
   
   try {
-    // Prompt for synthesizing results
+    // Enhanced prompt for synthesizing results
     const prompt = `
 Synthesize these research results into a comprehensive answer:
 
@@ -200,20 +200,31 @@ Results:
 ${toolResults}
 
 Instructions:
-1. Create a well-organized, informative response
+1. Create a well-organized, informative response with clear structure
 2. Use numbered citations [1], [2], etc. to reference sources
-3. Each claim should be supported by at least one citation
-4. Include relevant details without overwhelming
-5. Handle conflicting information or tool failures
-6. Directly address the original query
-7. Use consistent citation numbers throughout the text
-8. Place citations at the end of relevant sentences
-9. Multiple citations can be combined like [1,2] if needed
-10. Every source used should be cited at least once
+3. Include a dedicated "Citations:" or "References:" section at the end
+4. Use headers (###) to organize your response into clear sections
+5. Bold (**key concepts**) for improved readability
+6. Include numbered or bulleted lists for clarity when appropriate
+7. Each claim should be supported by at least one citation
+8. Include relevant details without overwhelming
+9. Directly address the original query
+10. When relevant, include sections like "Introduction" and "Conclusion"
+11. Ensure citations are properly formatted with source information
+
+Additional guidance to improve quality:
+- Structure helps: Use headers (###), bold text (**important**), and numbered points
+- Citations matter: Include a dedicated "Citations:" section with proper formatting
+- Completeness: Having Introduction, Core Sections, and Conclusion improves quality
+- Source diversity: Reference multiple sources when possible
+- Lists and bullets: Use them to break down complex information
+- Key terms: Bold important concepts and terminology
+- Section headers: Use clear, descriptive headers for each major point
+- Citation format: [1] for inline citations, full reference in Citations section
 `;
 
     return await callLLM(prompt, env, {
-      system: "You are an expert researcher who synthesizes information into accurate, helpful answers. Always use numbered citations to attribute information to sources.",
+      system: "You are an expert researcher who synthesizes information into accurate, helpful answers. Always use numbered citations to attribute information to sources. Structure your response with clear sections, bold text for emphasis, and proper citation formatting.",
       temperature: 0.5,
       max_tokens: 2000
     });
@@ -298,11 +309,13 @@ function calculateConfidence(results: ToolResult[], analysis: QueryAnalysis): nu
     avgConfidence = Math.max(avgConfidence, 0.6);
   }
   
-  // More flexible citation detection
+  // Enhanced citation pattern detection
   const citationPatterns = [
-    /\[(\d+(?:,\s*\d+)*)\]/g,  // Standard [1] format
-    /\[([a-zA-Z][^[\]]*)\]/g,  // [AuthorYear] format
-    /\(([^()]*\d{4}[^()]*)\)/g // (Author et al., 2023) format
+    /\[(\d+(?:,\s*\d+)*)\]/g,    // Standard [1] format
+    /\[([a-zA-Z][^[\]]*)\]/g,    // [AuthorYear] format
+    /\(([^()]*\d{4}[^()]*)\)/g,  // (Author et al., 2023) format
+    /\[Source\]/g,               // [Source] format
+    /\[\d+\]:/g                  // [1]: format (bibliography style)
   ];
   
   const citationCount = citationPatterns.reduce((count, pattern) => {
@@ -314,57 +327,90 @@ function calculateConfidence(results: ToolResult[], analysis: QueryAnalysis): nu
   
   // Calculate a more lenient citation density
   const citationDensity = Math.min(
-    (citationCount / Math.max(successfulResults.length * 3, 1)) * 2, // Multiply by 2 to increase weight
+    (citationCount / Math.max(successfulResults.length * 3, 1)) * 2,
     1.0
   );
   
-  // Consider content quality metrics
+  // Add weight for presence of citations section
+  const hasCitationsSection = successfulResults.some(r => {
+    const data = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
+    return data.includes('Citations:') || 
+           data.includes('References:') || 
+           data.includes('### Citations') || 
+           data.includes('### References');
+  });
+  
+  const citationSectionBonus = hasCitationsSection ? 0.2 : 0;
+  
+  // Enhanced content quality detection
   const contentQualityIndicators = successfulResults.some(r => {
     const data = typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
     return (
       data.includes('Conclusion') || 
       data.includes('References') || 
-      (data.match(/\*\*[^*]+\*\*/g)?.length ?? 0) > 5 || // Has multiple bold sections
+      data.includes('Citations:') ||
       data.includes('Introduction') ||
       data.includes('Summary') ||
-      /\d{4}/.test(data) // Contains years (likely references)
+      (data.match(/\*\*[^*]+\*\*/g)?.length ?? 0) > 3 || // Lower threshold from 5 to 3
+      (data.match(/###/g)?.length ?? 0) > 1 ||           // Check for multiple section headers
+      (data.match(/\d\.\s/g)?.length ?? 0) > 2 ||        // Check for numbered lists
+      /\[\d+\]/.test(data) ||                           // Check for citation brackets
+      /\d{4}/.test(data)                                // Contains years
     );
   });
   
-  const contentQualityFactor = contentQualityIndicators ? 0.8 : 0.5;
+  const contentQualityFactor = contentQualityIndicators ? 0.85 : 0.5;
   
-  // Consider source diversity
+  // Improved source diversity evaluation
+  const uniqueUrls = new Set(
+    successfulResults.flatMap(r => {
+      if (r.data && typeof r.data === 'object') {
+        if (Array.isArray(r.data)) {
+          return r.data.map(item => item.url).filter(Boolean);
+        } else if (r.data.url) {
+          return [r.data.url];
+        }
+      }
+      return [];
+    })
+  ).size;
+  
   const uniqueToolTypes = new Set(
     successfulResults.map(r => r.metadata?.toolType).filter(Boolean)
   ).size;
-  const sourceDiversityFactor = Math.min(uniqueToolTypes / 2, 1.0); // Normalize to max of 1.0
   
-  // Adjust weights
+  const sourceDiversityFactor = Math.min((uniqueUrls / 2) + (uniqueToolTypes / 3), 1.0);
+  
+  // Recalibrated weights with new factors
   const weights = {
-    toolResults: 0.35,
-    queryAnalysis: 0.15,
+    toolResults: 0.30,         // Decreased
+    queryAnalysis: 0.10,       // Decreased
     citations: 0.15,
-    contentQuality: 0.25,
-    sourceDiversity: 0.10
+    contentQuality: 0.30,      // Increased
+    sourceDiversity: 0.10,
+    citationSection: 0.05      // New factor
   };
   
-  // Calculate final confidence score
+  // Calculate final confidence score with new weights
   const confidenceScore = Math.min(
     (avgConfidence * weights.toolResults) +
     (analysis.confidence * weights.queryAnalysis) +
     (citationDensity * weights.citations) +
     (contentQualityFactor * weights.contentQuality) +
-    (sourceDiversityFactor * weights.sourceDiversity),
+    (sourceDiversityFactor * weights.sourceDiversity) +
+    (citationSectionBonus * weights.citationSection),
     1.0
   );
   
-  // Add confidence calculation details to metadata
+  // Enhanced confidence metadata
   const confidenceMetadata = {
     baseConfidence: avgConfidence,
     citationDensity,
+    citationCount,
+    citationSectionBonus,
     contentQualityFactor,
     sourceDiversityFactor,
-    citationCount,
+    uniqueUrls,
     uniqueToolTypes,
     weights
   };
