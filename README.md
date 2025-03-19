@@ -247,4 +247,6 @@ This project leverages multiple APIs and services:
 - Cloudflare Workers for hosting and execution
 - OpenAI API for result synthesis (optional)
 
-Special thanks to all the API providers and the open-source community for making this project possible. 
+Special thanks to:
+- The Octotools team for inspiring the orchestration component architecture
+- All the API providers and the open-source community for making this project possible. 
