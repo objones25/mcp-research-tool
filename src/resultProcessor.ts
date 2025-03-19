@@ -96,26 +96,64 @@ export async function synthesizeResults(
   results: ToolResult[],
   env: Env
 ): Promise<string> {
-  const prompt = `
-Synthesize these research results into a comprehensive answer:
+  const synthesisPrompt = `Instructions for Creating a High-Quality Research Response:
+
+1. Structure and Organization:
+   - Begin with a concise introduction that frames the topic
+   - Organize content into clear, themed sections with descriptive headers
+   - Use bullet points or numbered lists for complex information
+   - Conclude with a brief summary of key findings
+
+2. Citation Requirements:
+   - Use numbered citations in square brackets [1], [2], etc.
+   - Every significant claim must be supported by at least one citation
+   - Include a "Citations:" section at the end listing all references
+   - When multiple sources support a claim, use multiple citations [1,2,3]
+
+3. Formatting and Emphasis:
+   - Use **bold text** for key concepts, terms, and technologies
+   - Use *italics* for emphasis on important points
+   - Maintain consistent formatting throughout
+   - Use clear paragraph breaks for readability
+
+4. Content Quality:
+   - Directly address all aspects of the original query
+   - Present balanced viewpoints with supporting evidence
+   - Include specific examples and concrete details
+   - Highlight both advantages and limitations
+   - Use precise, technical language while remaining accessible
+
+5. Source Integration:
+   - Synthesize information across multiple sources
+   - Compare and contrast different viewpoints when relevant
+   - Highlight areas of consensus and disagreement in the field
+   - Include relevant statistics and quantitative data when available
+
+6. Technical Accuracy:
+   - Verify technical claims across multiple sources
+   - Include relevant equations or formulas if necessary
+   - Explain complex concepts in clear, precise terms
+   - Acknowledge uncertainties or limitations in current knowledge
+
+7. Currency and Relevance:
+   - Prioritize recent developments and current state of the field
+   - Include historical context when relevant
+   - Address future implications and ongoing challenges
+   - Note emerging trends and potential developments
+
+Please synthesize the research results into a comprehensive response following these guidelines, maintaining a professional and authoritative tone throughout.`;
+
+  const fullPrompt = `${synthesisPrompt}
 
 Query: "${query}"
 
 Results:
 ${results.map((r, i) => `
 Result ${i + 1}:
-${JSON.stringify(r.data, null, 2)}`).join('\n')}
-
-Instructions:
-1. Create a well-organized response
-2. Use numbered citations [1], [2], etc.
-3. Include a "Citations:" section
-4. Bold key concepts
-5. Each claim should be supported by citations
-6. Address the original query directly`;
+${JSON.stringify(r.data, null, 2)}`).join('\n')}`;
 
   try {
-    return await callLLM(prompt, env, {
+    return await callLLM(fullPrompt, env, {
       system: "You synthesize research results into clear, well-structured answers with proper citations.",
       temperature: 0.5
     });
