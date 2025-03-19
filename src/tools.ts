@@ -612,6 +612,144 @@ export const youtubeTranscript: ToolCard = {
   }
 };
 
+// arXiv Research Tool
+export const arXivSearch: ToolCard = {
+  id: 'arxiv_search',
+  name: 'arXiv Search',
+  description: 'Search academic papers and preprints from arXiv repository',
+  capabilities: ['academic_search', 'research_papers', 'scientific_literature'],
+  inputTypes: {
+    query: 'Search query string',
+    maxResults: 'Maximum number of results to return (default: 10)',
+    sortBy: 'Sort results by: relevance, lastUpdatedDate, submitted (default: relevance)'
+  },
+  outputType: 'List of academic papers with titles, authors, abstracts, and links',
+  demoCommands: [
+    {
+      command: 'arXivSearch({ query: "quantum computing", maxResults: 5 })',
+      description: 'Search for recent quantum computing papers'
+    }
+  ],
+  metadata: {
+    limitations: [
+      'Rate limited to 1 request per 3 seconds',
+      'Returns only academic papers and preprints',
+      'Limited to papers submitted to arXiv'
+    ],
+    bestPractices: [
+      'Use specific scientific terms',
+      'Include field-specific keywords',
+      'Use boolean operators (AND, OR, NOT)',
+      'Use field-specific searches (e.g., "ti:" for title)'
+    ]
+  },
+  compatibilityMetadata: {
+    queryTypes: {
+      'academic': 0.9,
+      'scientific': 0.9,
+      'technical': 0.8,
+      'research': 0.9,
+      'general_knowledge': 0.4
+    },
+    patterns: [
+      'research', 'paper', 'study', 'academic', 'scientific',
+      'journal', 'publication', 'preprint', 'arxiv',
+      'theory', 'experiment', 'methodology'
+    ],
+    urlCompatible: false,
+    entityTypes: [
+      'researcher', 'scientific_concept', 'theory',
+      'methodology', 'academic_field', 'technology'
+    ]
+  },
+  relevanceScore(query: string, analysis: QueryAnalysis): number {
+    let score = 0;
+    
+    // Pattern matching
+    const hasPattern = this.compatibilityMetadata.patterns.some(pattern => 
+      query.toLowerCase().includes(pattern.toLowerCase())
+    );
+    score += hasPattern ? 0.4 : 0;
+    
+    // Query type compatibility
+    const typeScore = Math.max(
+      ...analysis.queryTypes.map(type => 
+        this.compatibilityMetadata.queryTypes[type] || 0
+      )
+    );
+    score += typeScore * 0.4;
+    
+    // Entity compatibility
+    const hasRelevantEntity = analysis.entities.some(entity =>
+      this.compatibilityMetadata.entityTypes.includes(entity)
+    );
+    score += hasRelevantEntity ? 0.2 : 0;
+    
+    return Math.min(score, 1.0);
+  },
+  async execute(params: ToolParams, env: Env): Promise<ToolResult> {
+    try {
+      if (!params.query) {
+        throw new Error('Query parameter is required');
+      }
+
+      const startTime = Date.now();
+      const baseUrl = 'http://export.arxiv.org/api/query';
+      const searchQuery = new URLSearchParams({
+        search_query: params.query,
+        max_results: String(params.maxResults || 10),
+        sortBy: params.sortBy || 'relevance'
+      }).toString();
+
+      const response = await fetch(`${baseUrl}?${searchQuery}`, {
+        headers: {
+          'Accept': 'application/xml',
+          'User-Agent': 'mcp-research-tool/1.0 (https://github.com/objones25/mcp-research-tool)'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`arXiv API error: ${response.statusText}`);
+      }
+
+      const xmlText = await response.text();
+      
+      // Simple XML parsing to extract key information
+      const papers = xmlText.match(/<entry>(.*?)<\/entry>/gs) || [];
+      const results = papers.map(paper => {
+        const getTag = (tag: string) => {
+          const match = paper.match(new RegExp(`<${tag}[^>]*>(.*?)<\/${tag}>`, 's'));
+          return match ? match[1].trim() : '';
+        };
+        
+        const authors = paper.match(/<author>(.*?)<\/author>/gs)?.map(author => {
+          const match = author.match(/<n>(.*?)<\/n>/);
+          return match ? match[1].trim() : '';
+        }) || [];
+
+        return {
+          title: getTag('title'),
+          authors: authors,
+          summary: getTag('summary'),
+          published: getTag('published'),
+          updated: getTag('updated'),
+          doi: getTag('doi'),
+          link: (paper.match(/<id>(.*?)<\/id>/) || [])[1] || '',
+          categories: paper.match(/term="([^"]+)"/g)?.map(t => t.slice(6, -1)) || []
+        };
+      });
+
+      return handleToolSuccess({
+        papers: results,
+        totalResults: results.length,
+        query: params.query
+      }, startTime, 0.9);
+    } catch (error: unknown) {
+      return handleToolError(error);
+    }
+  }
+};
+
 // Export all tools
 export const tools = {
   braveSearch,
@@ -619,5 +757,6 @@ export const tools = {
   githubRepoSearch,
   githubCodeSearch,
   fireCrawl,
-  youtubeTranscript
+  youtubeTranscript,
+  arXivSearch
 } as const;
