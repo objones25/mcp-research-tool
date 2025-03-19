@@ -9,6 +9,9 @@
 	"compatibility_date": "2025-03-17",
 	"observability": {
 		"enabled": true
+	},
+	"vars": {
+		// Add any non-secret environment variables here
 	}
 	/**
 	 * Smart Placement
