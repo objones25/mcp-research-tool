@@ -21,8 +21,16 @@ export async function selectBestTools(
       `Tool: ${tool.name} (${tool.id})
        Score: ${score.toFixed(2)}
        Description: ${tool.description}
+       Capabilities: ${tool.capabilities.join(', ')}
+       Input Types: ${Object.entries(tool.inputTypes).map(([key, type]) => `${key}: ${type}`).join(', ')}
+       Output Type: ${tool.outputType}
+       Demo Commands: ${tool.demoCommands.map(cmd => `"${cmd.command}" (${cmd.description})`).join(', ')}
+       Limitations: ${tool.metadata.limitations.join(', ')}
+       Best Practices: ${tool.metadata.bestPractices.join(', ')}
+       Compatible Query Types: ${Object.entries(tool.compatibilityMetadata.queryTypes).map(([type, weight]) => `${type} (${weight})`).join(', ')}
        Patterns: ${tool.compatibilityMetadata.patterns.join(', ')}
-       URL Compatible: ${tool.compatibilityMetadata.urlCompatible ? 'Yes' : 'No'}`
+       URL Compatible: ${tool.compatibilityMetadata.urlCompatible ? 'Yes' : 'No'}
+       Compatible Entity Types: ${tool.compatibilityMetadata.entityTypes.join(', ')}`
     ).join('\n\n');
 
     const prompt = `
