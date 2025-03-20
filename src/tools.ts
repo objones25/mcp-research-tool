@@ -185,29 +185,13 @@ export const tavilySearch: ToolCard = {
     entityTypes: ['person', 'organization', 'technology', 'event']
   },
   relevanceScore(query: string, analysis: QueryAnalysis): number {
-    let score = 0;
-    
-    // Pattern matching
-    const hasPattern = this.compatibilityMetadata.patterns.some(pattern => 
-      query.toLowerCase().includes(pattern.toLowerCase())
+    return calculateRelevanceScore(
+      this.compatibilityMetadata.patterns,
+      this.compatibilityMetadata.queryTypes,
+      this.compatibilityMetadata.entityTypes,
+      query,
+      analysis
     );
-    score += hasPattern ? 0.4 : 0;
-    
-    // Query type compatibility
-    const typeScore = Math.max(
-      ...analysis.queryTypes.map(type => 
-        this.compatibilityMetadata.queryTypes[type] || 0
-      )
-    );
-    score += typeScore * 0.4;
-    
-    // Entity compatibility
-    const hasRelevantEntity = analysis.entities.some(entity =>
-      this.compatibilityMetadata.entityTypes.includes(entity)
-    );
-    score += hasRelevantEntity ? 0.2 : 0;
-    
-    return Math.min(score, 1.0);
   },
   async execute(params: ToolParams, env: Env): Promise<ToolResult> {
     try {
@@ -282,29 +266,13 @@ export const githubRepoSearch: ToolCard = {
     entityTypes: ['technology', 'programming_language', 'framework', 'library']
   },
   relevanceScore(query: string, analysis: QueryAnalysis): number {
-    let score = 0;
-    
-    // Pattern matching
-    const hasPattern = this.compatibilityMetadata.patterns.some(pattern => 
-      query.toLowerCase().includes(pattern.toLowerCase())
+    return calculateRelevanceScore(
+      this.compatibilityMetadata.patterns,
+      this.compatibilityMetadata.queryTypes,
+      this.compatibilityMetadata.entityTypes,
+      query,
+      analysis
     );
-    score += hasPattern ? 0.5 : 0;
-    
-    // Query type compatibility
-    const typeScore = Math.max(
-      ...analysis.queryTypes.map(type => 
-        this.compatibilityMetadata.queryTypes[type] || 0
-      )
-    );
-    score += typeScore * 0.3;
-    
-    // Entity compatibility
-    const hasRelevantEntity = analysis.entities.some(entity =>
-      this.compatibilityMetadata.entityTypes.includes(entity)
-    );
-    score += hasRelevantEntity ? 0.2 : 0;
-    
-    return Math.min(score, 1.0);
   },
   async execute(params: ToolParams, env: Env): Promise<ToolResult> {
     try {
@@ -388,29 +356,13 @@ export const githubCodeSearch: ToolCard = {
     entityTypes: ['programming_language', 'framework', 'library', 'function']
   },
   relevanceScore(query: string, analysis: QueryAnalysis): number {
-    let score = 0;
-    
-    // Pattern matching
-    const hasPattern = this.compatibilityMetadata.patterns.some(pattern => 
-      query.toLowerCase().includes(pattern.toLowerCase())
+    return calculateRelevanceScore(
+      this.compatibilityMetadata.patterns,
+      this.compatibilityMetadata.queryTypes,
+      this.compatibilityMetadata.entityTypes,
+      query,
+      analysis
     );
-    score += hasPattern ? 0.5 : 0;
-    
-    // Query type compatibility
-    const typeScore = Math.max(
-      ...analysis.queryTypes.map(type => 
-        this.compatibilityMetadata.queryTypes[type] || 0
-      )
-    );
-    score += typeScore * 0.3;
-    
-    // Entity compatibility
-    const hasRelevantEntity = analysis.entities.some(entity =>
-      this.compatibilityMetadata.entityTypes.includes(entity)
-    );
-    score += hasRelevantEntity ? 0.2 : 0;
-    
-    return Math.min(score, 1.0);
   },
   async execute(params: ToolParams, env: Env): Promise<ToolResult> {
     try {
@@ -483,26 +435,14 @@ export const fireCrawl: ToolCard = {
     entityTypes: ['webpage', 'article', 'blog_post']
   },
   relevanceScore(query: string, analysis: QueryAnalysis): number {
-    let score = 0;
-    
-    // Pattern matching
-    const hasPattern = this.compatibilityMetadata.patterns.some(pattern => 
-      query.toLowerCase().includes(pattern.toLowerCase())
+    return calculateRelevanceScore(
+      this.compatibilityMetadata.patterns,
+      this.compatibilityMetadata.queryTypes,
+      this.compatibilityMetadata.entityTypes,
+      query,
+      analysis,
+      urls => urls.length > 0 // URL presence check (highly relevant for crawling)
     );
-    score += hasPattern ? 0.3 : 0;
-    
-    // URL presence (highly relevant for crawling)
-    score += analysis.extractedUrls.length > 0 ? 0.5 : 0;
-    
-    // Query type compatibility
-    const typeScore = Math.max(
-      ...analysis.queryTypes.map(type => 
-        this.compatibilityMetadata.queryTypes[type] || 0
-      )
-    );
-    score += typeScore * 0.2;
-    
-    return Math.min(score, 1.0);
   },
   async execute(params: ToolParams, env: Env): Promise<ToolResult> {
     try {
@@ -663,29 +603,13 @@ export const arXivSearch: ToolCard = {
     ]
   },
   relevanceScore(query: string, analysis: QueryAnalysis): number {
-    let score = 0;
-    
-    // Pattern matching
-    const hasPattern = this.compatibilityMetadata.patterns.some(pattern => 
-      query.toLowerCase().includes(pattern.toLowerCase())
+    return calculateRelevanceScore(
+      this.compatibilityMetadata.patterns,
+      this.compatibilityMetadata.queryTypes,
+      this.compatibilityMetadata.entityTypes,
+      query,
+      analysis
     );
-    score += hasPattern ? 0.4 : 0;
-    
-    // Query type compatibility
-    const typeScore = Math.max(
-      ...analysis.queryTypes.map(type => 
-        this.compatibilityMetadata.queryTypes[type] || 0
-      )
-    );
-    score += typeScore * 0.4;
-    
-    // Entity compatibility
-    const hasRelevantEntity = analysis.entities.some(entity =>
-      this.compatibilityMetadata.entityTypes.includes(entity)
-    );
-    score += hasRelevantEntity ? 0.2 : 0;
-    
-    return Math.min(score, 1.0);
   },
   async execute(params: ToolParams, env: Env): Promise<ToolResult> {
     try {
@@ -799,29 +723,13 @@ export const newsApiSearch: ToolCard = {
     entityTypes: ['event', 'person', 'organization', 'location', 'topic']
   },
   relevanceScore(query: string, analysis: QueryAnalysis): number {
-    let score = 0;
-    
-    // Pattern matching
-    const hasPattern = this.compatibilityMetadata.patterns.some(pattern => 
-      query.toLowerCase().includes(pattern.toLowerCase())
+    return calculateRelevanceScore(
+      this.compatibilityMetadata.patterns,
+      this.compatibilityMetadata.queryTypes,
+      this.compatibilityMetadata.entityTypes,
+      query,
+      analysis
     );
-    score += hasPattern ? 0.4 : 0;
-    
-    // Query type compatibility
-    const typeScore = Math.max(
-      ...analysis.queryTypes.map(type => 
-        this.compatibilityMetadata.queryTypes[type] || 0
-      )
-    );
-    score += typeScore * 0.4;
-    
-    // Entity compatibility
-    const hasRelevantEntity = analysis.entities.some(entity =>
-      this.compatibilityMetadata.entityTypes.includes(entity)
-    );
-    score += hasRelevantEntity ? 0.2 : 0;
-    
-    return Math.min(score, 1.0);
   },
   async execute(params: ToolParams, env: Env): Promise<ToolResult> {
     try {
@@ -915,29 +823,13 @@ export const stackExchangeSearch: ToolCard = {
     entityTypes: ['programming_language', 'framework', 'library', 'error', 'concept']
   },
   relevanceScore(query: string, analysis: QueryAnalysis): number {
-    let score = 0;
-    
-    // Pattern matching
-    const hasPattern = this.compatibilityMetadata.patterns.some(pattern => 
-      query.toLowerCase().includes(pattern.toLowerCase())
+    return calculateRelevanceScore(
+      this.compatibilityMetadata.patterns,
+      this.compatibilityMetadata.queryTypes,
+      this.compatibilityMetadata.entityTypes,
+      query,
+      analysis
     );
-    score += hasPattern ? 0.4 : 0;
-    
-    // Query type compatibility
-    const typeScore = Math.max(
-      ...analysis.queryTypes.map(type => 
-        this.compatibilityMetadata.queryTypes[type] || 0
-      )
-    );
-    score += typeScore * 0.4;
-    
-    // Entity compatibility
-    const hasRelevantEntity = analysis.entities.some(entity =>
-      this.compatibilityMetadata.entityTypes.includes(entity)
-    );
-    score += hasRelevantEntity ? 0.2 : 0;
-    
-    return Math.min(score, 1.0);
   },
   async execute(params: ToolParams, env: Env): Promise<ToolResult> {
     try {
