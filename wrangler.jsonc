@@ -22,7 +22,13 @@
 			"binding": "RESEARCH_CACHE",
 			"id": "0c80ff45648f4514ad42f64bd09e84dc"
 		}
-	]
+	],
+	/**
+	 * AI Binding
+	 */
+	"ai": {
+		"binding": "AI"
+	}
 	/**
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
