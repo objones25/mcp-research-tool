@@ -862,6 +862,410 @@ export const stackExchangeSearch: ToolCard = {
   }
 };
 
+// Wikipedia API Tool
+export const wikipediaSearch: ToolCard = {
+  id: 'wikipedia_search',
+  name: 'Wikipedia Search',
+  description: 'Search Wikipedia articles and retrieve structured content',
+  capabilities: ['encyclopedia', 'general_knowledge', 'factual_information'],
+  inputTypes: {
+    query: 'Search query string',
+    limit: 'Maximum number of results (default: 5)',
+    language: 'Wikipedia language edition (default: en)'
+  },
+  outputType: 'List of Wikipedia articles with summaries, extracts, and URLs',
+  demoCommands: [
+    {
+      command: 'wikipediaSearch({ query: "quantum physics" })',
+      description: 'Search for Wikipedia articles about quantum physics'
+    }
+  ],
+  metadata: {
+    limitations: [
+      'Rate limited to prevent abuse',
+      'Content may vary across language editions',
+      'Article availability depends on topic coverage',
+      'May contain inaccuracies or bias as content is community-edited',
+      'Not always suitable as a sole authoritative source',
+      'Information may be outdated or incomplete'
+    ],
+    bestPractices: [
+      'Use specific search terms',
+      'Specify language for non-English queries',
+      'Use for factual information rather than opinions',
+      'Verify critical information with specialized or primary sources',
+      'Check article references and citations for reliability'
+    ]
+  },
+  compatibilityMetadata: {
+    queryTypes: {
+      'general_knowledge': 0.9,
+      'factual_information': 0.9,
+      'historical': 0.8,
+      'scientific': 0.7,
+      'biographical': 0.8
+    },
+    patterns: [
+      'what is', 'who is', 'define', 'explain', 'wikipedia',
+      'meaning', 'encyclopedia', 'information about', 'history of'
+    ],
+    urlCompatible: false,
+    entityTypes: ['person', 'location', 'organization', 'concept', 'event', 'scientific_term']
+  },
+  relevanceScore(query: string, analysis: QueryAnalysis): number {
+    return calculateRelevanceScore(
+      this.compatibilityMetadata.patterns,
+      this.compatibilityMetadata.queryTypes,
+      this.compatibilityMetadata.entityTypes,
+      query,
+      analysis
+    );
+  },
+  async execute(params: ToolParams, env: Env): Promise<ToolResult> {
+    try {
+      if (!params.query) {
+        throw new Error('Query parameter is required');
+      }
+
+      const startTime = Date.now();
+      const language = params.language || 'en';
+      const limit = params.limit || 5;
+      
+      // First make a search request to get page IDs
+      const searchUrl = new URL(`https://${language}.wikipedia.org/w/api.php`);
+      searchUrl.searchParams.append('action', 'query');
+      searchUrl.searchParams.append('list', 'search');
+      searchUrl.searchParams.append('srsearch', params.query);
+      searchUrl.searchParams.append('srlimit', limit.toString());
+      searchUrl.searchParams.append('format', 'json');
+      searchUrl.searchParams.append('origin', '*');
+
+      const searchResponse = await fetch(searchUrl);
+      if (!searchResponse.ok) {
+        throw new Error(`Wikipedia search API error: ${searchResponse.statusText}`);
+      }
+
+      const searchData = await searchResponse.json() as { 
+        query: { search: Array<{ pageid: number }> } 
+      };
+      const pageIds = searchData.query.search.map((result) => result.pageid);
+      
+      if (pageIds.length === 0) {
+        return handleToolSuccess({
+          query: params.query,
+          results: []
+        }, startTime, 0.8);
+      }
+
+      // Get detailed content for each page
+      const contentUrl = new URL(`https://${language}.wikipedia.org/w/api.php`);
+      contentUrl.searchParams.append('action', 'query');
+      contentUrl.searchParams.append('pageids', pageIds.join('|'));
+      contentUrl.searchParams.append('prop', 'extracts|info|categories|images|links');
+      contentUrl.searchParams.append('exintro', '1');
+      contentUrl.searchParams.append('explaintext', '1');
+      contentUrl.searchParams.append('inprop', 'url');
+      contentUrl.searchParams.append('format', 'json');
+      contentUrl.searchParams.append('origin', '*');
+
+      const contentResponse = await fetch(contentUrl);
+      if (!contentResponse.ok) {
+        throw new Error(`Wikipedia content API error: ${contentResponse.statusText}`);
+      }
+
+      const contentData = await contentResponse.json() as {
+        query: {
+          pages: Record<string, {
+            title: string;
+            extract: string;
+            fullurl: string;
+            pageid: number;
+            touched: string;
+            categories?: Array<{ title: string }>;
+            images?: Array<any>;
+          }>;
+        };
+      };
+      const pages = contentData.query.pages;
+      
+      const results = Object.values(pages).map((page) => ({
+        title: page.title,
+        extract: page.extract,
+        url: page.fullurl,
+        pageid: page.pageid,
+        lastModified: page.touched,
+        categories: page.categories ? page.categories.map((cat) => cat.title) : [],
+        imageCount: page.images ? page.images.length : 0
+      }));
+
+      return handleToolSuccess({
+        query: params.query,
+        results: results
+      }, startTime, 0.9);
+    } catch (error: unknown) {
+      return handleToolError(error);
+    }
+  }
+};
+
+// PatentsView API Tool
+export const patentSearch: ToolCard = {
+  id: 'patent_search',
+  name: 'Patent Search',
+  description: 'Search for patents using the PatentsView API',
+  capabilities: ['patent_search', 'intellectual_property', 'innovation_tracking'],
+  inputTypes: {
+    query: 'Search query string',
+    maxResults: 'Maximum number of results (default: 10)',
+    fields: 'Optional comma-separated list of fields to return',
+    startDate: 'Optional start date (YYYY-MM-DD)',
+    endDate: 'Optional end date (YYYY-MM-DD)'
+  },
+  outputType: 'List of patents with title, inventors, assignees, dates, and classifications',
+  demoCommands: [
+    {
+      command: 'patentSearch({ query: "machine learning", maxResults: 5 })',
+      description: 'Search for machine learning patents'
+    }
+  ],
+  metadata: {
+    limitations: [
+      'Rate limited to 45 requests per minute per API key',
+      'Maximum of 1000 results per query',
+      'Some data fields may be unavailable for older patents'
+    ],
+    bestPractices: [
+      'Use specific technical terms',
+      'Filter by date range for more relevant results',
+      'Use CPC classification codes when possible for precise searches'
+    ]
+  },
+  compatibilityMetadata: {
+    queryTypes: {
+      'technical': 0.8,
+      'innovation': 0.9,
+      'intellectual_property': 0.9,
+      'research': 0.7
+    },
+    patterns: [
+      'patent', 'invention', 'innovate', 'intellectual property', 'IP',
+      'technology', 'inventor', 'assignee', 'USPTO'
+    ],
+    urlCompatible: false,
+    entityTypes: ['technology', 'invention', 'company', 'person']
+  },
+  relevanceScore(query: string, analysis: QueryAnalysis): number {
+    return calculateRelevanceScore(
+      this.compatibilityMetadata.patterns,
+      this.compatibilityMetadata.queryTypes,
+      this.compatibilityMetadata.entityTypes,
+      query,
+      analysis
+    );
+  },
+  async execute(params: ToolParams, env: Env): Promise<ToolResult> {
+    try {
+      if (!params.query) {
+        throw new Error('Query parameter is required');
+      }
+      if (!env.PATENTSVIEW_API_KEY) {
+        throw new Error('PatentsView API key is not configured');
+      }
+
+      const startTime = Date.now();
+      const baseUrl = 'https://api.patentsview.org/patents/query';
+      
+      // Build query structure according to PatentsView API format
+      const requestBody: any = {
+        q: {
+          _or: [
+            { _text_any: { patent_title: params.query } },
+            { _text_all: { patent_abstract: params.query } }
+          ]
+        },
+        f: params.fields ? params.fields.split(',') : [
+          "patent_number", 
+          "patent_title", 
+          "patent_abstract", 
+          "patent_date", 
+          "patent_type",
+          "inventors.inventor_first_name",
+          "inventors.inventor_last_name",
+          "assignees.assignee_organization",
+          "cpc_section_id",
+          "cpc_subsection_id",
+          "cited_patent_number"
+        ],
+        o: {
+          "per_page": params.maxResults || 10
+        }
+      };
+      
+      // Add date filters if provided
+      if (params.startDate || params.endDate) {
+        const dateFilter: any = {};
+        if (params.startDate) dateFilter._gte = params.startDate;
+        if (params.endDate) dateFilter._lte = params.endDate;
+        requestBody.q._and = [{ patent_date: dateFilter }];
+      }
+
+      const response = await fetch(baseUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': env.PATENTSVIEW_API_KEY
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        throw new Error(`PatentsView API error: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return handleToolSuccess(data, startTime, 0.9);
+    } catch (error: unknown) {
+      return handleToolError(error);
+    }
+  }
+};
+
+// Open Library API Tool
+export const bookSearch: ToolCard = {
+  id: 'book_search',
+  name: 'Book Search',
+  description: 'Search for books and retrieve detailed information using the Open Library API',
+  capabilities: ['book_search', 'bibliographic_data', 'author_information'],
+  inputTypes: {
+    query: 'Search query for books (title, author, subject, etc.)',
+    maxResults: 'Maximum number of results (default: 10)',
+    searchType: 'Type of search: q (general), title, author, subject (default: q)'
+  },
+  outputType: 'List of books with title, author, publication info, and availability data',
+  demoCommands: [
+    {
+      command: 'bookSearch({ query: "Foundation Asimov", searchType: "title" })',
+      description: 'Search for books with "Foundation" in the title by Asimov'
+    }
+  ],
+  metadata: {
+    limitations: [
+      'No API key required but rate limited to prevent abuse',
+      'Some book details may be incomplete',
+      'Cover images may not be available for all books'
+    ],
+    bestPractices: [
+      'Include author names for more specific results',
+      'Use ISBN for exact book matching when available',
+      'Specify search type for more targeted results'
+    ]
+  },
+  compatibilityMetadata: {
+    queryTypes: {
+      'book': 0.9,
+      'literature': 0.9,
+      'educational': 0.8,
+      'general_knowledge': 0.7
+    },
+    patterns: [
+      'book', 'author', 'novel', 'publication', 'read',
+      'literature', 'textbook', 'isbn', 'title', 'biography'
+    ],
+    urlCompatible: false,
+    entityTypes: ['book', 'author', 'publisher', 'genre', 'subject']
+  },
+  relevanceScore(query: string, analysis: QueryAnalysis): number {
+    return calculateRelevanceScore(
+      this.compatibilityMetadata.patterns,
+      this.compatibilityMetadata.queryTypes,
+      this.compatibilityMetadata.entityTypes,
+      query,
+      analysis
+    );
+  },
+  async execute(params: ToolParams, env: Env): Promise<ToolResult> {
+    try {
+      if (!params.query) {
+        throw new Error('Query parameter is required');
+      }
+
+      const startTime = Date.now();
+      let url: URL;
+      
+      // Check if query is an ISBN number
+      const isbnRegex = /^(?:\d{10}|\d{13})$/;
+      if (isbnRegex.test(params.query.replace(/-/g, ''))) {
+        // ISBN search
+        const formattedIsbn = params.query.replace(/-/g, '');
+        url = new URL(`https://openlibrary.org/api/books`);
+        url.searchParams.append('bibkeys', `ISBN:${formattedIsbn}`);
+        url.searchParams.append('format', 'json');
+        url.searchParams.append('jscmd', 'data');
+      } else {
+        // General search
+        url = new URL('https://openlibrary.org/search.json');
+        
+        // Handle different search types
+        const searchType = params.searchType || 'q';
+        if (searchType === 'q') {
+          url.searchParams.append('q', params.query);
+        } else if (['title', 'author', 'subject'].includes(searchType)) {
+          url.searchParams.append(searchType, params.query);
+        } else {
+          url.searchParams.append('q', params.query);
+        }
+        
+        url.searchParams.append('limit', (params.maxResults || 10).toString());
+      }
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Open Library API error: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      // Process and format results
+      let results: any[];
+      if (isbnRegex.test(params.query.replace(/-/g, ''))) {
+        // Format ISBN results
+        results = Object.entries(data as Record<string, any>).map(([_, book]) => ({
+          title: book.title,
+          authors: book.authors?.map((author: any) => author.name) || [],
+          publishDate: book.publish_date,
+          publisher: book.publishers?.[0] || '',
+          isbn: book.identifiers?.isbn_13?.[0] || book.identifiers?.isbn_10?.[0] || '',
+          numberOfPages: book.number_of_pages,
+          cover: book.cover,
+          url: book.url
+        }));
+      } else {
+        // Format search results
+        const searchData = data as { docs?: any[], numFound?: number };
+        results = searchData.docs?.slice(0, params.maxResults || 10).map((book) => ({
+          title: book.title,
+          authors: book.author_name || [],
+          publishYear: book.first_publish_year,
+          publishers: book.publisher,
+          isbn: book.isbn?.[0] || '',
+          language: book.language,
+          subjects: book.subject?.slice(0, 5) || [],
+          coverId: book.cover_i,
+          key: book.key
+        })) || [];
+      }
+
+      return handleToolSuccess({
+        query: params.query,
+        results: results,
+        numFound: (data as any).numFound || results.length
+      }, startTime, 0.9);
+    } catch (error: unknown) {
+      return handleToolError(error);
+    }
+  }
+};
+
 // Export all tools
 export const tools = {
   braveSearch,
@@ -872,5 +1276,8 @@ export const tools = {
   youtubeTranscript,
   arXivSearch,
   newsApiSearch,
-  stackExchangeSearch
+  stackExchangeSearch,
+  wikipediaSearch,
+  patentSearch,
+  bookSearch
 } as const;

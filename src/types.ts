@@ -8,7 +8,8 @@ export interface Env {
   GITHUB_TOKEN: string;
   FIRE_CRAWL_API_KEY: string;
   NEWS_API_KEY: string;
-  OPENAI_API_KEY?: string;
+  OPENAI_API_KEY: string;
+  PATENTSVIEW_API_KEY: string;
   
   // Optional Workers AI binding
   AI?: any;
