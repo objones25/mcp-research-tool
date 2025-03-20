@@ -31,7 +31,8 @@ Return ONLY a JSON array of indices (0-based) for results that meet ALL criteria
   try {
     const llmResult = await callLLM(prompt, env, {
       system: "You are a strict research analyst. Only include results that are relevant, reputable, current, and substantive.",
-      temperature: 0.2
+      temperature: 0.2,
+      provider: "workersai"
     });
     
     const relevantIndices = new Set(JSON.parse(llmResult));
@@ -76,7 +77,8 @@ If the current results provide a reasonably complete answer, return hasGaps: fal
   try {
     const llmResult = await callLLM(prompt, env, {
       system: "You analyze result completeness, identifying only critical information gaps that would substantially impact the answer. Be conservative - only suggest follow-up queries for major gaps.",
-      temperature: 0.2
+      temperature: 0.2,
+      provider: "workersai"
     });
     
     const { hasGaps, followUpQuery, gapExplanation } = JSON.parse(llmResult);

@@ -46,7 +46,8 @@ Return only JSON in this format:
 
     const llmResult = await callLLM(prompt, env, {
       system: "You select the optimal research tools for queries, returning only valid JSON.",
-      temperature: 0.2
+      temperature: 0.2,
+      provider: "workersai"
     });
     
     const parsedResult = JSON.parse(llmResult);

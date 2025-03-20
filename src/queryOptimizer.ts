@@ -31,7 +31,8 @@ Return ONLY this JSON structure:
   try {
     const llmResult = await callLLM(prompt, env, {
       system: "You analyze search queries and return only valid JSON with key information.",
-      temperature: 0.2
+      temperature: 0.2,
+      provider: "workersai"
     });
     
     const parsedResult = JSON.parse(llmResult);
