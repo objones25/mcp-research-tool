@@ -12,7 +12,7 @@ export interface Env {
   PATENTSVIEW_API_KEY: string;
   
   // Optional Workers AI binding
-  AI?: any;
+  AI: any;
   
   // Optional caching
   RESEARCH_CACHE?: KVNamespace;

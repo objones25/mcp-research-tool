@@ -1,6 +1,7 @@
 import { ToolCard, QueryAnalysis, Env, ToolResult } from './types';
 import { tools } from './tools';
 import { callLLM } from './utils';
+import { cacheManager } from './cacheManager';
 
 // Function to select best tools for the query
 export async function selectBestTools(
@@ -87,30 +88,69 @@ export async function executeToolWithRetry(
   env: Env,
   maxRetries: number = 2
 ): Promise<ToolResult> {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await tool.execute(params, env);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      
-      if (attempt < maxRetries) {
-        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
-        continue;
+  // Try to get result from cache
+  if (env.RESEARCH_CACHE) {
+    return await cacheManager.executeWithCache(
+      tool.id,
+      async () => {
+        // This function handles retry logic
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          try {
+            return await tool.execute(params, env);
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            
+            if (attempt < maxRetries) {
+              await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
+              continue;
+            }
+            
+            return {
+              success: false,
+              data: null,
+              error: errorMessage,
+              metadata: { attempts: attempt + 1 }
+            };
+          }
+        }
+        
+        return {
+          success: false,
+          data: null,
+          error: 'Unexpected execution flow',
+          metadata: { attempts: maxRetries + 1 }
+        };
+      },
+      params,
+      env
+    );
+  } else {
+    // Fall back to non-cached execution if KV is not available
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await tool.execute(params, env);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
+          continue;
+        }
+        
+        return {
+          success: false,
+          data: null,
+          error: errorMessage,
+          metadata: { attempts: attempt + 1 }
+        };
       }
-      
-      return {
-        success: false,
-        data: null,
-        error: errorMessage,
-        metadata: { attempts: attempt + 1 }
-      };
     }
+    
+    return {
+      success: false,
+      data: null,
+      error: 'Unexpected execution flow',
+      metadata: { attempts: maxRetries + 1 }
+    };
   }
-  
-  return {
-    success: false,
-    data: null,
-    error: 'Unexpected execution flow',
-    metadata: { attempts: maxRetries + 1 }
-  };
 } 

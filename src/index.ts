@@ -6,7 +6,7 @@ import { formatter } from './formatter';
 
 export default class ResearchWorker extends WorkerEntrypoint<Env> {
   /**
-   * @description Performs research based on a query using multiple tools to gather and synthesize information
+   * @description Performs research based on a query using multiple tools to gather and synthesize information. Results are automatically cached for improved performance.
    * @param {string} query - The search query to execute
    * @param {number} [depth=5] - Research depth level (must be between 1 and 5)
    * @returns {{ content: Array<{ type: "text", text: string }> }} Formatted research results

@@ -15,6 +15,27 @@ export async function orchestrateResearch(
   depth: number = 3,
   env: Env
 ): Promise<ResearchResult> {
+  // Check if we have a cached full research result
+  if (env.RESEARCH_CACHE) {
+    try {
+      const cacheKey = `research_result:${query.trim().toLowerCase()}:${depth}`;
+      const cachedResult = await env.RESEARCH_CACHE.get(cacheKey, 'json') as ResearchResult | null;
+      
+      if (cachedResult) {
+        console.log('Returning cached research result');
+        return {
+          ...cachedResult,
+          metadata: {
+            ...cachedResult.metadata,
+            fromCache: true
+          }
+        };
+      }
+    } catch (error) {
+      console.error('Error retrieving cached research result:', error);
+    }
+  }
+  
   const startTime = Date.now();
   let iteration = 0;
   let allResults: ToolResult[] = [];
@@ -100,7 +121,7 @@ export async function orchestrateResearch(
   const answer = await synthesizeResults(query, allResults, env);
   const confidence = calculateConfidence(allResults, analysis, answer);
   
-  return {
+  const result: ResearchResult = {
     answer,
     sources: allSources,
     confidence,
@@ -117,6 +138,19 @@ export async function orchestrateResearch(
       }))
     }
   };
+  
+  // Cache the full research result
+  if (env.RESEARCH_CACHE) {
+    try {
+      const cacheKey = `research_result:${query.trim().toLowerCase()}:${depth}`;
+      // Cache for 3 days (259200 seconds)
+      await env.RESEARCH_CACHE.put(cacheKey, JSON.stringify(result), { expirationTtl: 259200 });
+    } catch (error) {
+      console.error('Error caching research result:', error);
+    }
+  }
+  
+  return result;
 }
 
 // Export the orchestrator
