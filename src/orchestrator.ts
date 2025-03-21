@@ -57,12 +57,10 @@ export async function orchestrateResearch(
       Math.ceil(depth * 1.5)
     );
     
-    // Track which tools we've used to avoid repetition
-    const newTools = selectedTools.filter(tool => !toolSelectionHistory.has(tool.id));
-    if (newTools.length === 0) {
-      console.log('No new tools available, terminating research');
-      break;
-    }
+    // Use all selected tools with no filtering
+    const newTools = selectedTools;
+    
+    // Track tools for metadata purposes only
     newTools.forEach(tool => toolSelectionHistory.add(tool.id));
     
     // Optimize queries for selected tools
@@ -82,17 +80,24 @@ export async function orchestrateResearch(
           ...(analysis.extractedUrls.length > 0 && { url: analysis.extractedUrls[0] }),
           ...(analysis.extractedYouTubeUrls.length > 0 && { 
             videoId: analysis.extractedYouTubeUrls[0].split('v=')[1] 
-          })
+          }),
+          // Add iteration information to help with caching
+          __metadata: {
+            iteration,
+            followUpQuery: iteration > 0,
+            originalQuery: query,
+            currentQuery
+          }
         }, env);
       })
     );
     
     // Assess relevance of new results
     const relevantResults = await assessRelevanceWithBatching(
-      query,
+      query, // Use the original query for relevance assessment
       iterationResults,
       env,
-      5, // Larger batch size (previously 3)
+      5, // Larger batch size
       3  // Process up to 3 batches in parallel
     );
     

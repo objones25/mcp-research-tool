@@ -1,6 +1,6 @@
 import { ToolCard, QueryAnalysis, Env, ToolResult } from './types';
 import { tools } from './tools';
-import { callLLM, generateJSON } from './utils';
+import { generateJSON } from './utils';
 import { cacheManager } from './cacheManager';
 import { z } from 'zod';
 

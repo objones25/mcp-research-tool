@@ -128,14 +128,21 @@ Consider:
 2. Is there a CRITICAL piece of information missing that would significantly change the answer?
 3. Would additional research likely yield substantially different or more accurate results?
 
-Return a JSON object with gap analysis information.`;
+If you identify specific gaps, create a highly targeted follow-up query that:
+- Focuses specifically on the missing aspects (not a general restatement)
+- Contains precise terms and keywords related to the missing information
+- Is formulated to get specific, detailed information to fill the gaps
+- Does NOT repeat information we already have from the results
+
+Return a JSON object with gap analysis information. The followUpQuery should be null if no critical gaps exist.`;
 
   try {
     // Define schema for gap analysis
     const gapAnalysisSchema = z.object({
       hasGaps: z.boolean(),
       followUpQuery: z.string().nullable(),
-      gapExplanation: z.string()
+      gapExplanation: z.string(),
+      missingAspects: z.array(z.string()).optional()
     });
     
     const gapAnalysis = await generateJSON(
@@ -143,15 +150,19 @@ Return a JSON object with gap analysis information.`;
       env,
       gapAnalysisSchema,
       {
-        system: "You analyze result completeness, identifying only critical information gaps that would substantially impact the answer. Be conservative - only suggest follow-up queries for major gaps.",
+        system: "You analyze research results for critical information gaps, creating targeted follow-up queries for missing information only. Focus on substantial gaps that would significantly impact the final answer. Avoid suggesting follow-up queries for minor missing details.",
         temperature: 0.2,
-        provider: "groq", // Use Llama model for cost savings
+        provider: "groq",
         schemaDescription: "Gap analysis for research results"
       }
     );
     
-    if (gapAnalysis.hasGaps) {
+    if (gapAnalysis.hasGaps && gapAnalysis.followUpQuery) {
       console.log(`Gap identified: ${gapAnalysis.gapExplanation}`);
+      console.log(`Follow-up query: ${gapAnalysis.followUpQuery}`);
+      if (gapAnalysis.missingAspects && gapAnalysis.missingAspects.length > 0) {
+        console.log(`Missing aspects: ${gapAnalysis.missingAspects.join(', ')}`);
+      }
     }
     
     return { 
