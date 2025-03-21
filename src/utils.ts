@@ -1,92 +1,68 @@
 import { Env } from './types';
+import { generateText, generateObject } from 'ai';
+import {createOpenAI } from '@ai-sdk/openai';
+import {createGroq } from '@ai-sdk/groq';
+import { z } from 'zod';
 
-interface LLMRequest {
-  model: string;
-  messages: Array<{role: string; content: string}>;
-  temperature?: number;
-  max_tokens?: number;
-}
-
-// Function to call OpenAI's GPT models
-async function callOpenAI(request: LLMRequest, apiKey: string): Promise<any> {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify(request)
-  });
-  
-  if (!response.ok) {
-    throw new Error(`OpenAI API error: ${response.statusText}`);
-  }
-  
-  return await response.json();
-}
-
-// Function to call Workers AI (Llama models)
-async function callWorkersAI(request: LLMRequest, env: Env): Promise<any> {
-  const messages = request.messages.map(msg => ({
-    role: msg.role,
-    content: msg.content
-  }));
-  
-  // @ts-ignore - Using Workers AI binding
-  const response = await env.AI.run('@cf/meta/llama-3-8b-instruct', {
-    messages,
-    max_tokens: request.max_tokens || 1024,
-    temperature: request.temperature || 0.7
-  });
-  
-  return response;
-}
-
-// Unified LLM interface that can switch between providers
+/**
+ * Generate text using AI SDK
+ */
 export async function callLLM(
-  prompt: string, 
-  env: Env, 
+  prompt: string,
+  env: Env,
   options: {
     system?: string;
     temperature?: number;
     max_tokens?: number;
-    provider?: 'openai' | 'workersai';
+    provider?: 'openai' | 'groq';
+    model?: string;
   } = {}
 ): Promise<string> {
-  const { 
-    system = "You are a helpful assistant.", 
-    temperature = 0.7, 
+  const {
+    system = "You are a helpful assistant.",
+    temperature = 0.7,
     max_tokens = 1024,
-    provider = 'openai'
+    provider = 'openai',
+    model = provider === 'openai' ? 'gpt-4-turbo' : 'llama-3.3-70b-versatile'
   } = options;
-  
-  const messages = [
-    { role: 'system', content: system },
-    { role: 'user', content: prompt }
-  ];
-  
+
   try {
-    if (provider === 'openai' && env.OPENAI_API_KEY) {
-      const request: LLMRequest = {
-        model: 'gpt-4-turbo',
-        messages,
-        temperature,
-        max_tokens
-      };
+    if (provider === 'openai') {
+      if (!env.OPENAI_API_KEY) {
+        throw new Error('OpenAI API key is required but not configured');
+      }
       
-      const response = await callOpenAI(request, env.OPENAI_API_KEY);
-      return response.choices[0].message.content;
+      // Create a configured OpenAI client with the API key
+      const openaiClient = createOpenAI({ apiKey: env.OPENAI_API_KEY });
+      
+      const { text } = await generateText({
+        model: openaiClient(model as any),
+        prompt,
+        system,
+        temperature,
+        maxTokens: max_tokens
+      });
+      
+      return text;
+    } else if (provider === 'groq') {
+      if (!env.GROQ_API_KEY) {
+        throw new Error('Groq API key is required but not configured');
+      }
+      
+      // Create a configured Groq client with the API key
+      const groqClient = createGroq({ apiKey: env.GROQ_API_KEY });
+      
+      const { text } = await generateText({
+        model: groqClient(model as any),
+        prompt,
+        system,
+        temperature,
+        maxTokens: max_tokens
+      });
+      
+      return text;
     } else {
-      // Fall back to Workers AI
-      const request: LLMRequest = {
-        model: '@cf/meta/llama-3-8b-instruct',
-        messages,
-        temperature,
-        max_tokens
-      };
-      
-      const response = await callWorkersAI(request, env);
-      return response.response;
+      throw new Error(`Unsupported provider: ${provider}`);
     }
   } catch (error) {
     console.error('Error calling LLM:', error);
@@ -94,7 +70,149 @@ export async function callLLM(
   }
 }
 
+/**
+ * Generate structured JSON response using AI SDK with schema validation
+ */
+export async function generateJSON<T>(
+  prompt: string,
+  env: Env,
+  schema: z.ZodType<T>,
+  options: {
+    system?: string;
+    temperature?: number;
+    provider?: 'openai' | 'groq';
+    model?: string;
+    schemaDescription?: string;
+  } = {}
+): Promise<T> {
+  const {
+    system = "You are a helpful assistant that creates accurate structured data.",
+    temperature = 0.3,
+    provider = 'openai',
+    model = provider === 'openai' ? 'gpt-4-turbo' : 'llama-3.3-70b-versatile',
+    schemaDescription = "Generated structured data"
+  } = options;
+
+  try {
+    if (provider === 'openai') {
+      if (!env.OPENAI_API_KEY) {
+        throw new Error('OpenAI API key is required but not configured');
+      }
+      
+      // Create a configured OpenAI client with the API key
+      const openaiClient = createOpenAI({ apiKey: env.OPENAI_API_KEY });
+      
+      const { object } = await generateObject({
+        model: openaiClient(model as any),
+        schema,
+        prompt,
+        system,
+        temperature,
+        schemaDescription
+      });
+      
+      return object as T;
+    } else if (provider === 'groq') {
+      if (!env.GROQ_API_KEY) {
+        throw new Error('Groq API key is required but not configured');
+      }
+      
+      // Create a configured Groq client with the API key
+      const groqClient = createGroq({ apiKey: env.GROQ_API_KEY });
+      
+      const { object } = await generateObject({
+        model: groqClient(model as any),
+        schema,
+        prompt,
+        system,
+        temperature,
+        schemaDescription
+      });
+      
+      return object as T;
+    } else {
+      throw new Error(`Unsupported provider: ${provider}`);
+    }
+  } catch (error) {
+    console.error('Error generating JSON with schema:', error);
+    throw error;
+  }
+}
+
+/**
+ * Generate array of structured items using AI SDK with schema validation
+ */
+export async function generateArray<T>(
+  prompt: string,
+  env: Env,
+  itemSchema: z.ZodType<T>,
+  options: {
+    system?: string;
+    temperature?: number;
+    provider?: 'openai' | 'groq';
+    model?: string;
+    schemaDescription?: string;
+  } = {}
+): Promise<T[]> {
+  const {
+    system = "You are a helpful assistant that creates accurate structured data.",
+    temperature = 0.3,
+    provider = 'openai',
+    model = provider === 'openai' ? 'gpt-4-turbo' : 'llama-3.3-70b-versatile',
+    schemaDescription = "Generated array of structured items"
+  } = options;
+
+  try {
+    if (provider === 'openai') {
+      if (!env.OPENAI_API_KEY) {
+        throw new Error('OpenAI API key is required but not configured');
+      }
+      
+      // Create a configured OpenAI client with the API key
+      const openaiClient = createOpenAI({ apiKey: env.OPENAI_API_KEY });
+      
+      const { object } = await generateObject({
+        model: openaiClient(model as any),
+        output: 'array',
+        schema: itemSchema,
+        prompt,
+        system,
+        temperature,
+        schemaDescription
+      });
+      
+      return object as T[];
+    } else if (provider === 'groq') {
+      if (!env.GROQ_API_KEY) {
+        throw new Error('Groq API key is required but not configured');
+      }
+      
+      // Create a configured Groq client with the API key
+      const groqClient = createGroq({ apiKey: env.GROQ_API_KEY });
+      
+      const { object } = await generateObject({
+        model: groqClient(model as any),
+        output: 'array',
+        schema: itemSchema,
+        prompt,
+        system,
+        temperature,
+        schemaDescription
+      });
+      
+      return object as T[];
+    } else {
+      throw new Error(`Unsupported provider: ${provider}`);
+    }
+  } catch (error) {
+    console.error('Error generating array with schema:', error);
+    throw error;
+  }
+}
+
 // Export utility functions
 export const utils = {
-  callLLM
+  callLLM,
+  generateJSON,
+  generateArray
 };

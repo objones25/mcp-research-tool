@@ -1,5 +1,6 @@
 import { ToolResult, QueryAnalysis, Env, ToolCard } from './types';
-import { callLLM } from './utils';
+import { callLLM, generateJSON, generateArray } from './utils';
+import { z } from 'zod';
 
 // Helper function to assess result relevance
 export async function assessRelevance(
@@ -26,16 +27,23 @@ Consider each result carefully:
 3. Is it sufficiently current for this type of information?
 4. Does it provide accurate, substantive information?
 
-Return ONLY a JSON array of indices (0-based) for results that meet ALL criteria.`;
+Return ONLY indices (0-based) for results that meet ALL criteria.`;
 
   try {
-    const llmResult = await callLLM(prompt, env, {
-      system: "You are a strict research analyst. Only include results that are relevant, reputable, current, and substantive.",
-      temperature: 0.2,
-      provider: "workersai"
-    });
+    // Define schema for relevant indices array
+    const relevantIndices = new Set(
+      await generateArray(
+        prompt, 
+        env, 
+        z.number().int().min(0), // Schema for each array item
+        {
+          system: "You are a strict research analyst. Only include results that are relevant, reputable, current, and substantive.",
+          temperature: 0.2,
+          provider: "groq" // Use Llama model for cost savings
+        }
+      )
+    );
     
-    const relevantIndices = new Set(JSON.parse(llmResult));
     return results.filter((_, i) => relevantIndices.has(i));
   } catch (error) {
     console.error('Relevance assessment failed:', error);
@@ -64,28 +72,36 @@ Consider:
 2. Is there a CRITICAL piece of information missing that would significantly change the answer?
 3. Would additional research likely yield substantially different or more accurate results?
 
-Return ONLY a JSON object:
-{
-  "hasGaps": boolean,
-  "followUpQuery": string or null,
-  "gapExplanation": "Brief explanation of the critical gap, if any"
-}
-
-IMPORTANT: Only identify truly critical gaps that would significantly impact the answer.
-If the current results provide a reasonably complete answer, return hasGaps: false.`;
+Return a JSON object with gap analysis information.`;
 
   try {
-    const llmResult = await callLLM(prompt, env, {
-      system: "You analyze result completeness, identifying only critical information gaps that would substantially impact the answer. Be conservative - only suggest follow-up queries for major gaps.",
-      temperature: 0.2,
-      provider: "workersai"
+    // Define schema for gap analysis
+    const gapAnalysisSchema = z.object({
+      hasGaps: z.boolean(),
+      followUpQuery: z.string().nullable(),
+      gapExplanation: z.string()
     });
     
-    const { hasGaps, followUpQuery, gapExplanation } = JSON.parse(llmResult);
-    if (hasGaps) {
-      console.log(`Gap identified: ${gapExplanation}`);
+    const gapAnalysis = await generateJSON(
+      prompt, 
+      env,
+      gapAnalysisSchema,
+      {
+        system: "You analyze result completeness, identifying only critical information gaps that would substantially impact the answer. Be conservative - only suggest follow-up queries for major gaps.",
+        temperature: 0.2,
+        provider: "groq", // Use Llama model for cost savings
+        schemaDescription: "Gap analysis for research results"
+      }
+    );
+    
+    if (gapAnalysis.hasGaps) {
+      console.log(`Gap identified: ${gapAnalysis.gapExplanation}`);
     }
-    return { hasGaps, followUpQuery: followUpQuery || undefined };
+    
+    return { 
+      hasGaps: gapAnalysis.hasGaps, 
+      followUpQuery: gapAnalysis.followUpQuery || undefined 
+    };
   } catch (error) {
     console.error('Gap analysis failed:', error);
     return { hasGaps: false };

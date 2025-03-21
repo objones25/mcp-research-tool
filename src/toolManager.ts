@@ -1,7 +1,8 @@
 import { ToolCard, QueryAnalysis, Env, ToolResult } from './types';
 import { tools } from './tools';
-import { callLLM } from './utils';
+import { callLLM, generateJSON } from './utils';
 import { cacheManager } from './cacheManager';
+import { z } from 'zod';
 
 // Function to select best tools for the query
 export async function selectBestTools(
@@ -45,29 +46,34 @@ Query analysis:
 - URLs: ${analysis.extractedUrls.join(' ') || 'None'}
 
 Available tools:
-${toolsInfo}
+${toolsInfo}`;
 
-Return only JSON in this format:
-{
-  "selectedTools": ["tool_id1", "tool_id2"],
-  "reasoning": ["Reason 1", "Reason 2"]
-}`;
-
-    const llmResult = await callLLM(prompt, env, {
-      system: "You select the optimal research tools for queries, returning only valid JSON.",
-      temperature: 0.2,
-      provider: "workersai"
+    // Define schema for tool selection response
+    const toolSelectionSchema = z.object({
+      selectedTools: z.array(z.string()),
+      reasoning: z.array(z.string())
     });
     
-    const parsedResult = JSON.parse(llmResult);
-    const selectedTools = parsedResult.selectedTools
+    const toolSelection = await generateJSON(
+      prompt,
+      env,
+      toolSelectionSchema,
+      {
+        system: "You select the optimal research tools for queries, returning only valid JSON.",
+        temperature: 0.2,
+        provider: "groq",
+        schemaDescription: "Tool selection with reasoning"
+      }
+    );
+    
+    const selectedTools = toolSelection.selectedTools
       .map((id: string) => Object.values(tools).find(tool => tool.id === id))
       .filter(Boolean) as ToolCard[];
     
     if (selectedTools.length > 0) {
       return {
         selectedTools,
-        reasoning: parsedResult.reasoning || []
+        reasoning: toolSelection.reasoning || []
       };
     }
     throw new Error("No valid tools selected by LLM");

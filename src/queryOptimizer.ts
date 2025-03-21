@@ -1,5 +1,6 @@
 import { QueryAnalysis, Env, ToolCard } from './types';
-import { callLLM } from './utils';
+import { generateJSON } from './utils';
+import { z } from 'zod';
 
 // Retained from queryEnhancer for backward compatibility
 function extractUrls(query: string): string[] {
@@ -18,31 +19,37 @@ export async function analyzeQuery(query: string, env: Env): Promise<QueryAnalys
   const prompt = `
 Analyze this search query and extract key information:
 
-Query: "${query}"
-
-Return ONLY this JSON structure:
-{
-  "intent": "search|explain|compare|implement|extract",
-  "entities": ["entity1", "entity2"],
-  "queryTypes": ["technical", "current_events", "general_knowledge", "comparison", "implementation"],
-  "constraints": ["constraint1", "constraint2"]
-}`;
+Query: "${query}"`;
 
   try {
-    const llmResult = await callLLM(prompt, env, {
-      system: "You analyze search queries and return only valid JSON with key information.",
-      temperature: 0.2,
-      provider: "workersai"
+    // Define schema for query analysis
+    const queryAnalysisSchema = z.object({
+      intent: z.enum(["search", "explain", "compare", "implement", "extract"]),
+      entities: z.array(z.string()),
+      queryTypes: z.array(
+        z.enum(["technical", "current_events", "general_knowledge", "comparison", "implementation"])
+      ),
+      constraints: z.array(z.string())
     });
     
-    const parsedResult = JSON.parse(llmResult);
+    const parsedResult = await generateJSON(
+      prompt,
+      env,
+      queryAnalysisSchema,
+      {
+        system: "You analyze search queries and return only valid JSON with key information.",
+        temperature: 0.2,
+        provider: "groq",
+        schemaDescription: "Query analysis structure"
+      }
+    );
     
     return {
       originalQuery: query,
-      intent: parsedResult.intent || 'search',
-      entities: parsedResult.entities || [],
-      constraints: parsedResult.constraints || [],
-      queryTypes: parsedResult.queryTypes || ['general_knowledge'],
+      intent: parsedResult.intent,
+      entities: parsedResult.entities,
+      constraints: parsedResult.constraints,
+      queryTypes: parsedResult.queryTypes,
       extractedUrls,
       extractedYouTubeUrls,
       confidence: 0.7
@@ -91,23 +98,36 @@ For each tool, return an optimized query that:
 1. Matches the tool's strengths and capabilities
 2. Preserves the original intent
 3. Includes relevant constraints
-4. Uses appropriate syntax for that tool
-
-Return ONLY a JSON object in this format:
-{
-  "tool_id": {
-    "query": "optimized query for this specific tool",
-    "params": {} // Additional tool-specific parameters if needed
-  }
-}`;
+4. Uses appropriate syntax for that tool`;
 
   try {
-    const llmResult = await callLLM(prompt, env, {
-      system: "You optimize search queries for specific research tools, returning only valid JSON.",
-      temperature: 0.3
+    // Create a schema that explicitly defines the expected structure
+    // Create a dynamic schema based on the tool IDs
+    const schemaProperties: Record<string, z.ZodTypeAny> = {};
+    
+    // Add each tool ID as a property in the schema
+    tools.forEach(tool => {
+      schemaProperties[tool.id] = z.object({
+        query: z.string().describe(`Optimized query for the ${tool.id} tool`),
+        params: z.record(z.string(), z.any()).optional().describe('Optional parameters for the query')
+      }).describe(`Query optimization for ${tool.id}`);
     });
     
-    return JSON.parse(llmResult);
+    // Create the final schema with all tool properties
+    const toolQuerySchema = z.object(schemaProperties)
+      .describe('Object containing optimized queries for each tool');
+    
+    return await generateJSON(
+      prompt,
+      env,
+      toolQuerySchema,
+      {
+        system: "You optimize search queries for specific research tools. Generate a JSON object where each key is a tool ID and the value contains the optimized query and optional parameters.",
+        temperature: 0.3,
+        provider: "openai",
+        schemaDescription: "Tool-specific query optimizations"
+      }
+    );
   } catch (error) {
     console.error('Query optimization failed:', error);
     
