@@ -45,6 +45,13 @@ Query analysis:
 - Entities: ${analysis.entities.join(', ')}
 - URLs: ${analysis.extractedUrls.join(' ') || 'None'}
 
+Requirements:
+1. Select tools that cover DIFFERENT aspects of the query
+2. Avoid tools that would return highly similar results
+3. Prioritize tools that complement each other
+4. Include at least one tool from each relevant query type if possible
+5. Balance specialized and general-purpose tools
+
 Available tools:
 ${toolsInfo}`;
 
@@ -80,6 +87,7 @@ ${toolsInfo}`;
   } catch (error) {
     console.error('Tool selection error:', error);
     
+    // Fall back to simple score-based selection
     return {
       selectedTools: scoredTools.slice(0, maxTools).map(item => item.tool),
       reasoning: ['Selected based on relevance scores (LLM selection failed)']

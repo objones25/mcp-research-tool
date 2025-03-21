@@ -11,7 +11,7 @@ export async function assessRelevance(
   const today = new Date().toISOString().split('T')[0];
   
   const prompt = `
-Assess which of these results are relevant and high-quality:
+Assess which of these results are both relevant and COMPLEMENTARY to each other:
 
 Query: "${query}"
 Today's Date: ${today}
@@ -21,13 +21,13 @@ ${results.map((r, i) => `
 Result ${i + 1}:
 ${JSON.stringify(r.data, null, 2)}`).join('\n')}
 
-Consider each result carefully:
-1. Is it directly relevant to answering the query?
-2. Is it from a reputable source?
-3. Is it sufficiently current for this type of information?
-4. Does it provide accurate, substantive information?
+IMPORTANT: Select a diverse set of results that:
+1. Cover different aspects of the query
+2. Come from different sources/perspectives
+3. Provide unique information not covered by other results
+4. Collectively provide comprehensive coverage
 
-Return ONLY indices (0-based) for results that meet ALL criteria.`;
+Return ONLY indices (0-based) for results that are both RELEVANT AND ADD UNIQUE VALUE.`;
 
   try {
     // Define schema for relevant indices array
@@ -49,6 +49,62 @@ Return ONLY indices (0-based) for results that meet ALL criteria.`;
     console.error('Relevance assessment failed:', error);
     return results;
   }
+}
+
+// New function that implements batching for assessRelevance
+export async function assessRelevanceWithBatching(
+  query: string,
+  results: ToolResult[],
+  env: Env,
+  batchSize: number = 3,
+  maxParallelBatches: number = 2
+): Promise<ToolResult[]> {
+  // If results are fewer than the batch size, just use regular assessment
+  if (results.length <= batchSize) {
+    return assessRelevance(query, results, env);
+  }
+  
+  const relevantResults: ToolResult[] = [];
+  
+  // Calculate how many batches we'll have
+  const totalBatches = Math.ceil(results.length / batchSize);
+  
+  // Process batches with parallelization
+  for (let batchStart = 0; batchStart < totalBatches; batchStart += maxParallelBatches) {
+    // Determine how many batches to process in this parallel group
+    const batchesToProcess = Math.min(maxParallelBatches, totalBatches - batchStart);
+    
+    // Create an array of promises for batch processing
+    const batchPromises = Array.from({ length: batchesToProcess }, (_, i) => {
+      const startIndex = (batchStart + i) * batchSize;
+      const endIndex = Math.min(startIndex + batchSize, results.length);
+      const batch = results.slice(startIndex, endIndex);
+      return assessRelevance(query, batch, env);
+    });
+    
+    // Wait for all batches in this group to complete
+    const batchResults = await Promise.all(batchPromises);
+    
+    // Collect relevant results from all batches
+    batchResults.forEach(relevantBatch => {
+      relevantResults.push(...relevantBatch);
+    });
+  }
+  
+  // If we've collected more than 2*batchSize results, do one final diversity pass
+  if (relevantResults.length > batchSize * 2) {
+    // For large result sets, use a larger batch size for final pass to ensure diversity
+    const finalBatchSize = Math.min(relevantResults.length, 10);
+    
+    // Process in smaller chunks if still too large
+    if (relevantResults.length > finalBatchSize) {
+      return assessRelevanceWithBatching(query, relevantResults, env, finalBatchSize, maxParallelBatches);
+    } else {
+      return assessRelevance(query, relevantResults, env);
+    }
+  }
+  
+  return relevantResults;
 }
 
 // Helper function to analyze information gaps
@@ -106,6 +162,59 @@ Return a JSON object with gap analysis information.`;
     console.error('Gap analysis failed:', error);
     return { hasGaps: false };
   }
+}
+
+// Helper function to analyze information gaps with batching
+export async function analyzeGapsWithBatching(
+  query: string,
+  currentResults: ToolResult[],
+  env: Env,
+  batchSize: number = 5
+): Promise<{ hasGaps: boolean; followUpQuery?: string }> {
+  // If we have a small number of results, use regular gap analysis
+  if (currentResults.length <= batchSize) {
+    return analyzeGaps(query, currentResults, env);
+  }
+  
+  // Batch the results
+  const batches: ToolResult[][] = [];
+  for (let i = 0; i < currentResults.length; i += batchSize) {
+    batches.push(currentResults.slice(i, i + batchSize));
+  }
+  
+  // Analyze gaps in each batch in parallel
+  const batchGapAnalyses = await Promise.all(
+    batches.map(batch => analyzeGaps(query, batch, env))
+  );
+  
+  // Check if any batch has gaps
+  const batchWithGaps = batchGapAnalyses.find(analysis => analysis.hasGaps);
+  if (batchWithGaps) {
+    return batchWithGaps;
+  }
+  
+  // If no individual batch has gaps, do a final analysis with representative results
+  // Select most important result from each batch
+  const representativeResults: ToolResult[] = [];
+  batches.forEach(batch => {
+    // Find the highest confidence result in the batch
+    const highestConfidenceResult = batch.reduce((best, current) => {
+      const bestConfidence = best.metadata?.confidence || 0;
+      const currentConfidence = current.metadata?.confidence || 0;
+      return currentConfidence > bestConfidence ? current : best;
+    }, batch[0]);
+    
+    representativeResults.push(highestConfidenceResult);
+  });
+  
+  // Add some random results for diversity
+  const remainingResults = currentResults.filter(r => !representativeResults.includes(r));
+  const randomSample = remainingResults
+    .sort(() => 0.5 - Math.random())
+    .slice(0, Math.min(batchSize, remainingResults.length));
+  
+  // Combine representative results with random sample for final analysis
+  return analyzeGaps(query, [...representativeResults, ...randomSample], env);
 }
 
 // Function to synthesize results

@@ -1,9 +1,9 @@
-import { QueryAnalysis, ToolResult, Env, ResearchResult } from './types';
+import { ToolResult, Env, ResearchResult } from './types';
 import { queryOptimizer } from './queryOptimizer';
 import { selectBestTools, executeToolWithRetry } from './toolManager';
 import { 
-  assessRelevance, 
-  analyzeGaps, 
+  assessRelevanceWithBatching,
+  analyzeGapsWithBatching,
   synthesizeResults, 
   extractSources, 
   calculateConfidence 
@@ -88,7 +88,13 @@ export async function orchestrateResearch(
     );
     
     // Assess relevance of new results
-    const relevantResults = await assessRelevance(query, iterationResults, env);
+    const relevantResults = await assessRelevanceWithBatching(
+      query,
+      iterationResults,
+      env,
+      5, // Larger batch size (previously 3)
+      3  // Process up to 3 batches in parallel
+    );
     
     // Add relevant results to collection
     allResults = [...allResults, ...relevantResults];
@@ -98,7 +104,7 @@ export async function orchestrateResearch(
     allSources = [...allSources, ...newSources];
     
     // Analyze gaps and determine if another iteration is needed
-    const { hasGaps, followUpQuery } = await analyzeGaps(query, allResults, env);
+    const { hasGaps, followUpQuery } = await analyzeGapsWithBatching(query, allResults, env, 8);
     
     // Check termination conditions
     if (!hasGaps || !followUpQuery) {
