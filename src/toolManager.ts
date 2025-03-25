@@ -68,7 +68,7 @@ ${toolsInfo}`;
       {
         system: "You select the optimal research tools for queries, returning only valid JSON.",
         temperature: 0.2,
-        provider: "groq",
+        provider: "openai",
         schemaDescription: "Tool selection with reasoning"
       }
     );
